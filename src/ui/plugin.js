@@ -1,0 +1,6086 @@
+import { randomUUID } from '../crypto-compat.js';
+import { postWindowMessage } from '../host-compat.js';
+import { escapeHtml, downloadJson } from '../config.js';
+import { assistantHostRequest, credentialRequest, currentAccount, currentChat, extensionChatRequest, isInstalled, persistUIState, readUIState, storageKey, storageRequest,
+  readAssistantArchive, persistAssistantArchive, registerUIStateFlush, getUIStateSync, subscribeUIStateSync } from '../runtime.js';
+import { createCoalescedSave } from '../coalesced-save.js';
+import { readBrowserCache, writeBrowserCache } from '../browser-cache.js';
+import { credentialError, credentialFailure, credentialSavedMessage } from '../credential-errors.js';
+import { apiError, publicExtensionTask } from '../extension-api.js';
+import { createExtensionTaskService } from '../extension-tasks.js';
+import { extensionCapabilities, extensionPresets, prepareExtensionSnapshot, publicImageParameters } from './extension-generation.js';
+import { imageEditDraft, prepareImageEdit, imageEditMessages, applyImageRewrite, drawingSeed, imageEditAvailability } from '../image-edit.js';
+import { applyChatImageEdit, applyChatImageStyle, refreshChatImageCharacters, chatImageBelongsTo } from '../chat-image-actions.js';
+import { blockingChatWindow, waitForChatWindow, mergeChatPrompt } from '../chat-preparation.js';
+import { createChatPromptStyle, inferChatPromptStyle } from '../chat-prompt-style.js';
+import { renderImageEditor } from './image-editor.js';
+import { NovelAIProcessingPanel } from './novelai-processing.js';
+import { processingSnapshot, prepareProcessingSource, validateProcessingDraft, buildProcessingRequest,
+  processingEndpoint, processingTitle, processingVariant } from '../novelai-processing.js';
+import '../styles/novelai-processing.css';
+import { AdvancedPanel } from './advanced.js';
+import { BackupPanel } from './backup.js';
+import { settingsResetPatch } from '../settings-reset.js';
+import { SettingsResetPanel } from './settings-reset.js';
+import { BackupStore } from '../backup-store.js';
+import { ComicChapterStore } from '../comic-chapters.js';
+import { RecoveryDraftPanel } from './recovery-drafts.js';
+import { recoveryBundle, copyComicRecovery } from '../recovery-drafts.js';
+import { ASSISTANT_OPERATIONS } from '../assistant-workflow.js';
+import { RELEASE } from '../release.js';
+import { ChangelogPanel } from './changelog.js';
+import { ComponentsPanel } from './components.js';
+import { LocalToolsPanel } from './local-tools.js';
+import { normalizeLocalTools } from '../local-tools.js';
+import { ReleasePanel } from './release-panel.js';
+import { NetworkDiagnosticPanel } from './network-diagnostics.js';
+import { DebugToolsPanel } from './debug-tools.js';
+import { ReaderPanel } from './reader.js';
+import { ComicPanel } from './comic.js';
+import { normalizeComicLibrary, validateComicLibrary, saveComicProject, comicStoryboardMessages, parseComicStoryboard,
+  comicPanelSnapshot, comicPanelBusy, reconcileComicJobs, comicAssistantOptions, comicPlanPromptPreview } from '../comic.js';
+import { comicGenerationSignature } from '../comic-workspace.js';
+import { comicPanelRewriteMessages, parseComicPanelRewrite } from '../comic-editing.js';
+import { normalizeReaderSettings } from '../chat-reader.js';
+import { recentGenerationFailures } from '../debug-errors.js';
+import '../styles/network-diagnostics.css';
+import { ReferenceAssets, normalizeReferenceImage, assetBase64 } from '../reference-assets.js';
+import { advancedOf, validateAdvanced, encodeVibe, modelCapabilities } from '../advanced-generation.js';
+import { prepareAdvancedPayload, finishAdvancedImages } from '../advanced-payload.js';
+import { watchComfyProgress } from '../comfy-advanced.js';
+import '../styles/advanced.css';
+import { groupVersions, currentDrawing, versionGroupId, editRelation, drawingGroups, validImageId } from '../../server/linghuashi-storage/image-versions.mjs';
+import '../styles/image-editor.css';
+import { normalizeAssistant, assistantConnectionSync, assistantModelNames, requestAssistantModels, buildAssistantMessages, parseAssistantResult, applyAssistantPlan } from '../prompt-assistant.js';
+import { renderAssistant, assistantModelChoices } from './assistant.js';
+import { AssistantPresetPanel } from './assistant-presets.js';
+import { composeAssistantPresetMessages, selectedAssistantPresetEntries } from '../assistant-presets.js';
+import { composeTaskMessages, illustrationPlans, selectedIllustration, freezeIllustrationCharacters,
+  syncPrimaryIllustration, evidencedCharacterStates, selectIllustrationCharacter } from '../assistant-workflow.js';
+import { AssistantWorkflowPanel } from './assistant-workflow.js';
+import { TaskPromptPanel } from './assistant-rules.js';
+import { START_GOALS, normalizeExperience, imageReadiness, assistantReadiness, storageReadiness, failureActions, guideSteps, guideStepComplete } from '../start-guide.js';
+import { renderStartGuide, renderReadiness, renderFailureActions, readinessBadge, guideCommand, renderFirstSuccess } from './start-guide.js';
+import { FirstSuccessVerification } from '../first-success.js';
+import { experienceFold } from './experience.js';
+import { buildProfileMessages, manualProfileSource, buildProfileRefreshMessages, parseProfileRefresh, applyProfileRefresh } from '../profile-ai.js';
+import { AssistantDiagnosticPanel, AssistantSchemePanel, AssistantLintPanel } from './assistant-tools.js';
+import { normalizeAssistantSchemes, resolveAssistantScheme, validateSchemeSettings } from '../assistant-schemes.js';
+import { normalizeAssistantHistory, rememberAssistantDraft, ASSISTANT_HISTORY_BYTES } from '../assistant-history.js';
+import { AssistantHistoryPanel, AssistantRecoveryPanel } from './assistant-history.js';
+import { AssistantContextPanel } from './assistant-context.js';
+import { AssistantScenePanel } from './assistant-scene.js';
+import { assistantUsage } from '../assistant-context.js';
+import { compatibilityIdentity, compatibilityFor, resolveAssistantCompatibility, saveCompatibility, assistantBudget } from '../assistant-compatibility.js';
+import { renderAssistantCompatibility, renderAssistantBudget } from './assistant-compatibility.js';
+import { replaceSelectedScene, sceneReanalysisMessages } from '../assistant-scene.js';
+import '../styles/assistant.css';
+import { migrateProfileLibrary, normalizeProfileLibrary, normalizeProfile, effectiveProfiles, saveProfile, saveProfileAndSelect, deleteProfile,
+  updateProfileChat, resolveCharacterScene, applyCharacterScene, normalizeCharacterScene, restoreSceneProfiles,
+  applySceneOutfit, setGlobalOutfit, reconcileTemporaryScene, recordProfileChanges } from '../character-profiles.js';
+import { characterLimit } from '../character-layout.js';
+import { editCharacterParticipant, selectCharacterParticipant, arrangeCharacterScene } from '../character-scene-editor.js';
+import { prepareMultiCharacterPrompt, prepareChatMultiCharacterPrompt } from '../multi-character-prompt.js';
+import { normalizePromptProcessing, validatePromptProcessing } from '../prompt-triggers.js';
+import { PromptProcessingPanel } from './prompt-processing.js';
+import { renderCharacters as renderCharacterPage, renderCharacterSelection, refreshOutfitDraftFeedback } from './characters.js';
+import { creationRevision, previewCreation, prepareCreation } from '../creation-workflow.js';
+import { renderCreationModes, renderCreationPreview } from './creation-workflow.js';
+import { OutfitDraftSessions, pendingOutfitDrafts, prepareOutfitDrafts } from '../outfit-drafts.js';
+import { confirmOutfitDrafts } from './outfit-drafts.js';
+import { ProfileAIPanel } from './profile-ai.js';
+import { confirmDiscardChanges, confirmProfileDeletion } from './discard-changes.js';
+import { requestAssistantText } from '../prompt-assistant.js';
+import '../styles/characters.css';
+import '../styles/profile-ai.css';
+import { CONNECTION_PROVIDERS, normalizeConnection, normalizeConnections, resolvePresetConnection,
+  saveConnectionProfile, deleteConnectionProfile, setCurrentConnection } from '../connections.js';
+import { emptyArtist, normalizeArtistLibrary, saveArtist, importArtistLibrary, applyArtist } from '../artist-library.js';
+import { renderArtists, renderArtistDirectory, renderArtistQuickPick } from './artists.js';
+import { renderNamedConnections, renderPresetBinding } from './named-connections.js';
+import '../styles/artists.css';
+import { normalizeTagLibrary, allTagTemplates } from '../tag-library.js';
+import { TagLibraryPanel, attachPromptTagButtons } from './tags.js';
+import { visualPromptPreview } from '../visual-prompt.js';
+import { WorkbenchPanel } from './workbench.js';
+import { normalizeWorkbench, normalizeReviews, reviewValue, setReview, BATCH_LIMIT } from '../prompt-workbench.js';
+import { normalizeVibeLibrary } from '../vibe-library.js';
+import '../styles/workbench.css';
+import '../styles/tags.css';
+import '../styles/prompt-editor.css';
+import { icon, paintIcons } from '../icons.js';
+import { navigation, samples, styles } from './sample-data.js';
+import { pluginIcon } from './branding.js';
+import { characterThemeAccent, getCharacterTheme } from './appearance.js';
+import { renderGenerationTransition } from './generation-transition.js';
+import '../styles/generation-transition.css';
+import { createFloatingMenu } from './floating-menu.js';
+import { GenerationQueue, GenerationError, buildNovelAIRequest, submitGeneration, downloadResults, cancelComfyPending } from '../generation.js';
+import { canRecoverGeneration } from '../generation-recovery.js';
+import { createTaskImageSync, startGenerationPolling } from '../generation-sync.js';
+import { TaskPersistence, createBrowserTaskRequest } from '../task-persistence.js';
+import '../styles/tasks.css';
+import { validBinding } from '../chat.js';
+import chibiEating from '../assets/themes/whale/whale-girl-eating.webp';
+import chibiThinking from '../assets/themes/whale/whale-girl-thinking.webp';
+import chibiSad from '../assets/themes/whale/whale-girl-sad.webp';
+import chibiExcited from '../assets/themes/whale/whale-girl-excited.webp';
+import chibiDeadpan from '../assets/themes/whale/whale-girl-deadpan.webp';
+import claudeSmile from '../assets/themes/claude/claude-smile.webp';
+import claudeReading from '../assets/themes/claude/claude-reading.webp';
+import claudePuzzled from '../assets/themes/claude/claude-puzzled.webp';
+import claudeSharing from '../assets/themes/claude/claude-sharing.webp';
+import claudeCompanion from '../assets/themes/claude/claude-companion.webp';
+import geminiGreeting from '../assets/themes/gemini/gemini-greeting.webp';
+import geminiShy from '../assets/themes/gemini/gemini-shy.webp';
+import geminiThinking from '../assets/themes/gemini/gemini-thinking.webp';
+import geminiSmile from '../assets/themes/gemini/gemini-smile.webp';
+import geminiReading from '../assets/themes/gemini/gemini-reading.webp';
+import gptSmug from '../assets/themes/gpt/gpt-smug.webp';
+import gptFocused from '../assets/themes/gpt/gpt-focused.webp';
+import gptShy from '../assets/themes/gpt/gpt-shy.webp';
+import gptDeadpan from '../assets/themes/gpt/gpt-deadpan.webp';
+import gptWings from '../assets/themes/gpt/gpt-wings.webp';
+import glmSmug from '../assets/themes/glm/glm-smug.webp';
+import glmDisdain from '../assets/themes/glm/glm-disdain.webp';
+import glmReport from '../assets/themes/glm/glm-report.webp';
+import glmShy from '../assets/themes/glm/glm-shy.webp';
+import glmSleepy from '../assets/themes/glm/glm-sleepy.webp';
+import kimiPrism from '../assets/themes/kimi/kimi-prism.webp';
+import kimiReading from '../assets/themes/kimi/kimi-reading.webp';
+import kimiThinking from '../assets/themes/kimi/kimi-thinking.webp';
+import kimiSmile from '../assets/themes/kimi/kimi-smile.webp';
+import kimiMusic from '../assets/themes/kimi/kimi-music.webp';
+import grokSarcastic from '../assets/themes/grok/grok-sarcastic.webp';
+import grokPeace from '../assets/themes/grok/grok-peace.webp';
+import grokRebellious from '../assets/themes/grok/grok-rebellious.webp';
+import grokFocused from '../assets/themes/grok/grok-focused.webp';
+import grokMischievous from '../assets/themes/grok/grok-mischievous.webp';
+import doubaoPointing from '../assets/themes/doubao/doubao-pointing.webp';
+import doubaoHeart from '../assets/themes/doubao/doubao-heart.webp';
+import doubaoTsundere from '../assets/themes/doubao/doubao-tsundere.webp';
+import doubaoFocused from '../assets/themes/doubao/doubao-focused.webp';
+import doubaoShy from '../assets/themes/doubao/doubao-shy.webp';
+import ancientCalm from '../assets/themes/ancient/ancient-calm.webp';
+import ancientThinking from '../assets/themes/ancient/ancient-thinking.webp';
+import ancientConcerned from '../assets/themes/ancient/ancient-concerned.webp';
+import ancientSmile from '../assets/themes/ancient/ancient-smile.webp';
+import ancientWaiting from '../assets/themes/ancient/ancient-waiting.webp';
+import { GENERATION_MODES, SETTINGS_DEFAULTS, SETTING_LIMITS, normalizeSettings, renderSettings } from './settings.js';
+import { identifySkService, probeService, resolveNovelAIService } from './connection.js';
+import { NOVELAI_DEFAULTS, NOVELAI_MODELS, NOVELAI_SIZES, isNAI3, supportsVariety, normalizeNovelAI, normalizeNovelAIState, selectedNovelAIPreset, novelAIPresetDirty, loadNovelAIPreset, saveNovelAIPreset, renderNovelAIParameters, renderNovelAIPresets } from './novelai.js';
+import { OPENAI_DEFAULTS, OPENAI_MODELS, normalizeOpenAI, normalizeOpenAIState, selectedOpenAIPreset, openAIPresetDirty, loadOpenAIPreset, saveOpenAIPreset, openAIURLs, openAISize, isOpenAINovelAI, usesGPTImage, openAIQualityOptions, buildOpenAIRequest, probeOpenAIModels, filterOpenAIModels, renderOpenAIModelItems, renderOpenAIParameters, renderOpenAIPresets } from './openai.js';
+import { COMFY_FIELDS, parseWorkflow, newComfyConfig, autoMapWorkflow, mappingCandidates, normalizeComfyParams, normalizeComfyState, selectedComfyPreset, comfyPresetDirty, loadComfyPreset, saveComfyPreset, applyWorkflowParameters, normalizeComfyEndpoint, probeComfyUI, workflowWarnings, renderComfyWorkflow, renderComfyConnectionOptions, renderComfyService, renderComfyPresets } from './comfyui.js';
+import { SDWEBUI_DEFAULTS, normalizeSDWebUI, sdwebuiBase, sdwebuiHeaders, probeSDWebUI, buildSDWebUIRequest, loraPrompt } from '../sdwebui.js';
+import { normalizeSDWebUIState, selectedSDWebUIPreset, sdwebuiPresetDirty, loadSDWebUIPreset, saveSDWebUIPreset,
+  renderSDWebUIConnection, renderSDWebUIParameters, renderSDWebUIPresets } from './sdwebui.js';
+import { DrawingLibrary, normalizeSnapshot, captureSnapshot, restoreSnapshot, makeDrawing, hydrateDrawings, revokeDrawings, filterDrawings, drawingPage, renderDrawingManager, renderDrawingViewer, exportDrawings, importArchive, drawingFilename, saveBlob, formatBytes, galleryIndexStatus } from './drawings.js';
+import '../styles/drawings.css';
+
+const UI_STORAGE_NAME = 'tavern-draw-preview-ui-v1';
+let configCacheAvailable = true;
+const initial = {
+  page: 'settings',
+  ...SETTINGS_DEFAULTS,
+  prompt: samples[0].prompt,
+  negative: 'low quality, blurry, watermark',
+  shape: 'landscape',
+  steps: 28,
+  cfg: 6,
+  seed: -1,
+  model: '自定义工作流',
+  style: 'natural',
+  character: '旅人',
+  appearance: '短发，灰绿色眼睛，深色旅行披风，银色肩扣',
+  outfit: '深色旅行披风',
+  profile: '默认预设',
+  sampler: 'Euler ancestral',
+  scheduler: 'Karras',
+  history: ['lake', 'mountain'],
+  favorites: [],
+  search: '',
+  favoriteOnly: false,
+};
+let state;
+let savedUI = {};
+try {
+  savedUI = readUIState(UI_STORAGE_NAME);
+  state = { ...initial, ...savedUI };
+} catch {
+  state = { ...initial };
+}
+Object.assign(state, normalizeSettings(state));
+state.experience = normalizeExperience(state.experience, Boolean(savedUI.settingsVersion));
+normalizeNovelAIState(state);
+normalizeComfyState(state);
+normalizeOpenAIState(state);
+normalizeSDWebUIState(state);
+normalizeConnections(state);
+state.artistLibrary = normalizeArtistLibrary(state.artistLibraryVersion === 1 ? state.artistLibrary
+  : styles.map((style) => ({ id: style.id, name: style.title, category: '基础风格', artist: style.tags, target: 'all' })));
+state.artistLibraryVersion = 1;
+state.tagLibrary = normalizeTagLibrary(state.tagLibrary);
+state.promptProcessing = normalizePromptProcessing(state.promptProcessing);
+state.workbench = normalizeWorkbench(state.workbench);
+state.drawingReviews = normalizeReviews(state.drawingReviews);
+state.vibeLibrary = normalizeVibeLibrary(state.vibeLibrary);
+state.readerSettings = normalizeReaderSettings(state.readerSettings);
+state.comicLibrary = normalizeComicLibrary(state.comicLibrary);
+state.localTools = normalizeLocalTools(state.localTools);
+if (!state.assistantDefaultsVersion) {
+  if (state.assistant?.maxTokens === 1600) state.assistant.maxTokens = 4000;
+  state.assistantDefaultsVersion = 1;
+}
+state.assistant = normalizeAssistant(state.assistant);
+state.assistantSchemes = normalizeAssistantSchemes(state.assistantSchemes);
+state.assistantSchemeId = typeof state.assistantSchemeId === 'string' ? state.assistantSchemeId : '';
+state.characterProfiles = migrateProfileLibrary(savedUI);
+state.characterSceneOverride = normalizeCharacterScene(state.characterSceneOverride);
+state.profileRefreshCursor = state.profileRefreshCursor && typeof state.profileRefreshCursor === 'object'
+  ? { chatKey: String(state.profileRefreshCursor.chatKey || '').slice(0, 2048),
+    count: Math.max(0, Math.trunc(Number(state.profileRefreshCursor.count) || 0)) }
+  : null;
+state.assistantInput = typeof state.assistantInput === 'string' ? state.assistantInput.slice(0, 32000) : '';
+try { state.assistantDraft = state.assistantDraft ? parseAssistantResult(JSON.stringify(state.assistantDraft), { stored: true, editable: true }) : null; }
+catch { state.assistantDraft = null; }
+state.assistantHistory = readAssistantArchive(UI_STORAGE_NAME, state.assistantHistory, state.updatedAt);
+let persistedAssistantHistory = null;
+let configSaveState = 'saved';
+let refreshComicSave = () => {};
+const pendingSave = createCoalescedSave(() => persist(), {
+  onPending: () => { configSaveState = 'pending'; refreshSaveStatus(); },
+  onError: (error) => { configSaveState = 'error'; refreshSaveStatus(); toast(error.message); },
+});
+registerUIStateFlush(() => pendingSave.flush());
+window.addEventListener('pagehide', () => pendingSave.flush());
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') pendingSave.flush(); });
+state.history = Array.isArray(state.history) ? state.history.filter((id) => samples.some((sample) => sample.id === id)) : [...initial.history];
+state.favorites = Array.isArray(state.favorites) ? state.favorites.filter((id) => samples.some((sample) => sample.id === id)) : [];
+if (!state.settingsVersion) {
+  state.page = 'settings';
+  state.settingsVersion = 1;
+}
+if (state.page === 'preferences') state.page = 'settings';
+delete state.single;
+delete state.retention;
+delete state.triggerTag;
+let config;
+let runtimeState = 'ready';
+let toastTimer;
+let progress = 0;
+let activeSample = samples[0];
+let activeDrawingId = null;
+let drawings = [];
+const drawingLibrary = new DrawingLibrary({ mode: () => state.cacheLocation });
+const drawingUI = {
+  filters: { source: 'all', start: '', end: '', search: '', favoriteOnly: false },
+  page: 1, pageSize: 24, multiselect: false, selection: new Set(),
+  busy: false, loading: true, error: '',
+  exportOptions: { naming: 'index-title', metadata: 'keep' },
+};
+const viewerUI = { ids: [], index: 0, details: true, zoom: false, imageId: '', compare: false, compareId: '', review: false, reviewHistory: [] };
+let chatImageOpenRevision = 0;
+let imageEditorUI = null;
+let activeJobId = null;
+let generationSubmitting = false;
+let generationVerified = null;
+const verifiedImages = new Set(), verifiedAssistant = new Set();
+const pageScrolls = new Map();
+let workflowReturn = null, generationIssue = '';
+let setupExpanded = false;
+let libraryReady;
+let libraryReload;
+let cleanupBusy = false;
+let serverPolicySignature;
+let serverPolicyWork = Promise.resolve();
+const CLEANUP_STORAGE = storageKey('linghuashi-last-cleanup');
+let lastCleanup = Number(readBrowserCache(CLEANUP_STORAGE)) || Date.now();
+let editPrompt = false;
+let host;
+let rendering = false;
+let renderingEditor = false;
+let floatingMenu;
+const credentials = {
+  novelai: { key: '', endpoint: '' },
+  comfyui: { key: '', endpoint: '', auth: 'none' },
+  openai: { key: '' },
+  sdwebui: { key: '', endpoint: '', auth: 'none' },
+};
+const referenceAssets = new ReferenceAssets({ mode: () => state.cacheLocation });
+function saveVibeLibrary(library) {
+  const previous = state.vibeLibrary; state.vibeLibrary = library;
+  try { persist(); } catch (error) { state.vibeLibrary = previous; throw error; }
+}
+const advancedPanel = new AdvancedPanel({
+  assets: referenceAssets, getSnapshot: () => captureSnapshot(state),
+  update: (snapshot) => {
+    if (snapshot.provider === 'comfyui') state.comfyui = snapshot.config;
+    else state[snapshot.provider] = snapshot.params;
+    persist();
+  },
+  render: () => render(true), encode: encodeCurrentVibe, gallery: () => drawingGroups(drawings),
+  useDrawing: materializeReferenceDrawing,
+  getVibeLibrary: () => state.vibeLibrary, setVibeLibrary: saveVibeLibrary,
+});
+const editorAdvancedPanel = new AdvancedPanel({
+  id: 'editor', assets: referenceAssets, getSnapshot: () => imageEditorUI?.draft || captureSnapshot(state),
+  update: (snapshot) => { if (imageEditorUI) imageEditorUI.draft = snapshot; },
+  render: () => { if (imageEditorUI) showImageEditor(); }, encode: encodeCurrentVibe,
+  gallery: () => drawingGroups(drawings), useDrawing: materializeReferenceDrawing,
+  getVibeLibrary: () => state.vibeLibrary, setVibeLibrary: saveVibeLibrary,
+  disabled: () => !imageEditorUI || imageEditorUI.busy || imageEditorUI.submitting,
+});
+const processingPanel = new NovelAIProcessingPanel({
+  storageLocation: () => state.cacheLocation, currentParams: () => state.novelai,
+  service: () => {
+    const service = resolveNovelAIService(credentials.novelai.key, credentials.novelai.endpoint);
+    return { official: service.id === 'official', label: service.title || service.message || 'NovelAI 接口' };
+  },
+  closeTags: () => tagPanel.close(),
+  openTags: ({ target, input, visual, params, apply, closed }) => tagPanel.open({
+    target, visual, label: '图片增强草稿',
+    getContext: () => ({ provider: 'novelai', params: params() }),
+    getPreview: (edits) => visualPromptPreview({ provider: 'novelai', params: params() }, edits),
+    insert: (next) => { apply(next); input.value = next[target]; }, closed,
+  }),
+  submit: enqueueProcessing,
+});
+const credentialState = Object.fromEntries(CONNECTION_PROVIDERS.map((provider) => [provider, {
+  dirty: false, revision: 0, timer: null, writing: Promise.resolve(), message: '', error: false,
+}]));
+let presetBusy = false;
+const artistUI = { search: '', category: '', favoriteOnly: false, mode: 'replace', quality: false, negative: false,
+  dirty: false, draft: structuredClone(state.artistLibrary[0] || null), previewBusy: false };
+function globalTagContext() {
+  let params = state.provider === 'comfyui' ? state.comfyui.params : state[state.provider];
+  const frozen = state.characterSceneOverride;
+  if (frozen?.applied && (!state.characterSceneOverrideProvider || state.characterSceneOverrideProvider === state.provider)) {
+    params = { ...params, positive: frozen.basePositive, negative: frozen.baseNegative };
+  }
+  return { provider: state.provider, params,
+    mapping: state.comfyui.mapping };
+}
+function insertGlobalTags(params) {
+  const previous = state.provider === 'comfyui' ? state.comfyui.params : state[state.provider];
+  const previousScene = state.characterSceneOverride;
+  if (state.provider === 'comfyui') state.comfyui.params = params;
+  else state[state.provider] = params;
+  if (previousScene?.applied && (!state.characterSceneOverrideProvider || state.characterSceneOverrideProvider === state.provider)) {
+    state.characterSceneOverride = { ...previousScene, basePositive: params.positive, baseNegative: params.negative };
+  }
+  try { persist(); }
+  catch (error) {
+    if (state.provider === 'comfyui') state.comfyui.params = previous;
+    else state[state.provider] = previous;
+    state.characterSceneOverride = previousScene;
+    throw error;
+  }
+  host.querySelectorAll('textarea[data-nai], textarea[data-openai], textarea[data-comfy], textarea[data-sdwebui]').forEach((input) => {
+    const key = input.dataset.nai || input.dataset.openai || input.dataset.comfy || input.dataset.sdwebui;
+    if (['positive', 'negative', 'artist'].includes(key)) input.value = params[key] || '';
+  });
+  if (state.provider === 'novelai') updateNovelAIDirty();
+  else if (state.provider === 'openai') updateOpenAIDirty();
+  else if (state.provider === 'sdwebui') updateSDWebUIDirty();
+  else updateComfyDirty();
+}
+const tagPanel = new TagLibraryPanel({
+  getLibrary: () => state.tagLibrary,
+  setLibrary: (library) => {
+    const previous = state.tagLibrary; state.tagLibrary = library;
+    try { persist(); } catch (error) { state.tagLibrary = previous; throw error; }
+  },
+  getContext: globalTagContext, insert: insertGlobalTags, notify: toast,
+});
+
+function openPromptTools(target, input, visual = false) {
+  let picker = { target, visual, getContext: globalTagContext, insert: insertGlobalTags,
+    getPreview: (edits) => visualPromptPreview(captureSnapshot(state), edits),
+    closed: () => { if (config && host) render(true); } };
+  if (input.dataset.artistField) {
+    const draft = artistUI.draft;
+    picker = { ...picker, label: '画师串库草稿', previewTitle: '画风配方提示词',
+      getContext: () => ({ provider: 'novelai', params: { model: 'nai-diffusion-4-5-full',
+        positive: draft.quality, negative: draft.negative, artist: draft.artist },
+      limits: { positive: 4000, negative: 12000, artist: 4000 } }),
+      getPreview: null,
+      insert: (params, fields) => {
+        if (artistUI.draft !== draft) throw new Error('画师串草稿已改变，请重新打开');
+        for (const field of Array.isArray(fields) ? fields : [fields]) draft[field === 'positive' ? 'quality' : field] = params[field];
+        artistUI.dirty = true;
+      } };
+  } else if (input.dataset.profileField || input.dataset.profileOutfit) {
+    const draft = profileUI.draft, outfit = input.dataset.profileOutfit
+      ? draft?.outfits.find((row) => row.id === input.dataset.profileOutfit) : null;
+    picker = { ...picker, label: outfit ? `${outfit.name} · 服装草稿` : `${draft.name} · 档案草稿`, previewTitle: '档案草稿提示词',
+      getContext: () => ({ provider: 'novelai', params: { model: 'nai-diffusion-4-5-full',
+        positive: outfit ? outfit.prompt : draft.tags, negative: outfit ? '' : draft.negative, artist: '' },
+      allowedTargets: outfit ? ['positive'] : ['positive', 'negative'], limits: { positive: 4000, negative: 2000 } }),
+      getPreview: null,
+      insert: (params, fields) => {
+        if (profileUI.draft !== draft || outfit && !draft.outfits.includes(outfit)) throw new Error('角色档案草稿已改变，请重新打开');
+        for (const field of Array.isArray(fields) ? fields : [fields]) {
+          if (outfit) outfit.prompt = params.positive;
+          else draft[field === 'positive' ? 'tags' : field] = params[field];
+        }
+        profileUI.dirty = true;
+      } };
+  }
+  tagPanel.open(picker);
+}
+let keyVisible = false;
+let connectionStatus = { message: '等待输入秘钥', tone: 'neutral' };
+const networkDiagnosticPanel = new NetworkDiagnosticPanel({
+  context: () => networkContext(state.provider),
+  relayProbe: (context, { signal }) => assistantRelayRequest('probe', {
+    settings: { source: 'api', apiTransport: 'tavern', endpoint: context.endpoint }, key: context.key,
+  }, { signal, timeout: 10 }),
+  onClose: () => debugToolsPanel.refresh(),
+});
+function networkContext(provider) {
+  if (provider === 'assistant') return {
+    provider, endpoint: state.assistant.endpoint, key: assistantUI.key, apiTransport: state.assistant.apiTransport,
+    error: assistantUI.error || assistantUI.modelsError,
+  };
+  return {
+    provider, ...state.connections[provider], ...credentials[provider],
+    endpoint: provider === 'openai' ? state.openaiEndpoint : credentials[provider].endpoint,
+    path: state.openaiPath, error: provider === state.provider && connectionStatus.tone === 'error' ? connectionStatus.message : '',
+  };
+}
+window.addEventListener('pagehide', () => { networkDiagnosticPanel.close(); debugToolsPanel.stop(); });
+let resolvedService = null;
+let connectionController;
+let connectionTimer;
+let addressExpanded = false;
+let novelaiAdvancedOpen = false;
+let comfyProbe = null;
+const comfyExpanded = { advanced: false, mapping: false, auth: false };
+let openaiModels = [];
+let sdwebuiProbe = null;
+let sdwebuiAdvancedOpen = false;
+const openaiModelUI = { fetched: false, open: false, query: '' };
+let openaiAdvancedOpen = false;
+let openaiTransportOpen = false;
+const assistantUI = { busy: false, error: '', controller: null, key: '', keyVisible: false, keyStatus: '', keyError: false,
+  keyDirty: false, keyRevision: 0, keyTimer: null, keyWriting: Promise.resolve(),
+  models: [], modelsBusy: false, modelsStatus: '', modelsError: '', modelsOpen: false, modelsQuery: '',
+  modelsController: null, tavernCurrent: '', modelSource: '', summary: null,
+  failureTrace: null,
+  failureResponse: (readBrowserCache(storageKey('linghuashi-assistant-failure-v1')) || '').slice(0, 100000),
+  binding: validBinding(state.assistantBinding) ? state.assistantBinding : null,
+  requestId: typeof state.assistantRequestId === 'string' ? state.assistantRequestId : null };
+const firstSuccess = new FirstSuccessVerification();
+let chatObservation = null;
+window.addEventListener('pagehide', () => {
+  writeBrowserCache(storageKey('linghuashi-assistant-failure-v1'), assistantUI.failureResponse || '');
+});
+const assistantPresetPanel = new AssistantPresetPanel({
+  settings: () => state.assistant,
+  available: isInstalled,
+  update: (patch) => { state.assistant = normalizeAssistant({ ...state.assistant, ...patch }); persist(); },
+  request: (action, value) => assistantHostRequest(action, value, { timeout: 20 }),
+  preview: async () => {
+    const options = normalizeAssistant(state.assistant), snapshot = captureSnapshot(state);
+    const context = await assistantHostRequest('context', { binding: assistantUI.binding, inputOnly: options.inputOnly && Boolean(state.assistantInput.trim()),
+      contextSelection: assistantContextPanel.selection }, { timeout: 20 });
+    context.characterScene = state.characterSceneOverride ? snapshot.characterScene
+      : resolveCharacterScene(state.characterProfiles, context.chatKey, context.characterAvatars);
+    const messages = await prepareAssistantMessages({ options, operation: state.assistantInput.trim() ? 'generate' : 'illustrate',
+      input: state.assistantInput.trim(), context, snapshot });
+    assistantContextPanel.show(context, assistantUsage(messages, context, options.maxTokens));
+    return messages;
+  },
+});
+const taskPromptPanel = new TaskPromptPanel({
+  draftKey: storageKey('linghuashi-task-prompt-drafts-v1'),
+  settings: () => state.assistant,
+  update: (patch) => {
+    const previous = state.assistant;
+    state.assistant = normalizeAssistant({ ...previous, ...patch });
+    try { persist(); } catch (error) { state.assistant = previous; throw error; }
+    render(true);
+  },
+  preview: async (operation, patch) => {
+    pendingSave.flush();
+    let options = normalizeAssistant({ ...state.assistant, ...patch }), base, note = '使用当前助手配置';
+    const snapshot = captureSnapshot(state), params = snapshot.params || snapshot.config.params;
+    if (operation === 'comic') {
+      const project = comicPanel.project;
+      if (!project) throw new Error('请先在漫画工坊创建或选择项目');
+      options = comicAssistantOptions(options, project);
+      base = comicStoryboardMessages({ ...project, source: project.source.trim() || '剧情将在创建分镜时填入。' }, options);
+      note = `当前漫画项目 · ${project.panelCount} 格${project.source.trim() ? '' : ' · 剧情为占位内容'}`;
+    } else if (operation === 'profile') {
+      base = buildProfileMessages([manualProfileSource('预览角色', '角色资料将在创建档案时填入。')], options);
+      note = '角色资料为占位内容';
+    } else if (operation === 'edit') {
+      base = imageEditMessages(snapshot, '在此填入单图修改要求', options);
+      note = '当前生图参数 · 修改要求为占位内容';
+    } else {
+      const context = await assistantHostRequest('context', { binding: assistantUI.binding, inputOnly: options.inputOnly && operation !== 'illustrate',
+        contextSelection: assistantContextPanel.selection }, { timeout: 20 });
+      context.characterScene = state.characterSceneOverride ? snapshot.characterScene
+        : resolveCharacterScene(state.characterProfiles, context.chatKey, context.characterAvatars);
+      base = buildAssistantMessages({ settings: options, operation, input: state.assistantInput.trim(), context,
+        target: { provider: snapshot.provider, model: params.model } });
+    }
+    return { messages: await prepareUtilityMessages(base, operation, options), note };
+  },
+});
+const assistantWorkflowPanel = new AssistantWorkflowPanel({
+  settings: () => state.assistant,
+  update: (patch, continuous) => {
+    state.assistant = normalizeAssistant({ ...state.assistant, ...patch });
+    if (continuous) pendingSave.schedule(); else persist();
+  },
+  isBusy: () => assistantUI.busy || profileAI.busy || imageEditorUI?.busy,
+  editRules: (operation) => taskPromptPanel.open(operation),
+  request: (action, value) => assistantHostRequest(action, value, { timeout: 20 }),
+});
+const assistantDiagnosticPanel = new AssistantDiagnosticPanel({
+  release: RELEASE, settings: () => state.assistant,
+  hasFailure: (trace) => trace === assistantUI.failureTrace && Boolean(assistantUI.failureResponse),
+  preview: () => assistantPresetPanel.click('preview'),
+  failure: () => {
+    const details = host?.querySelector('[data-assistant-failure]');
+    if (details) { details.open = true; details.scrollIntoView({ block: 'nearest' }); }
+  },
+  network: () => networkDiagnosticPanel.open(networkContext('assistant')),
+});
+const assistantSchemePanel = new AssistantSchemePanel({
+  library: () => state.assistantSchemes, active: () => state.assistantSchemeId,
+  updateLibrary: (library, id) => {
+    const previous = state.assistantSchemes, active = state.assistantSchemeId;
+    state.assistantSchemes = library; state.assistantSchemeId = id;
+    try { persist(); } catch (error) { state.assistantSchemes = previous; state.assistantSchemeId = active; throw error; }
+  },
+  capture: captureAssistantScheme, load: loadAssistantScheme,
+});
+const assistantLintPanel = new AssistantLintPanel({
+  current: () => ({ plan: state.assistantDraft, index: assistantUI.illustrationIndex || 0 }),
+  tagCount: () => state.assistant.tagCount,
+  target: async () => {
+    if (!assistantUI.binding) return assistantUI.lintTarget ?? null;
+    const context = await assistantHostRequest('context', { binding: assistantUI.binding }, { timeout: 20 });
+    return context.target;
+  },
+  apply: (plan) => {
+    const previous = state.assistantDraft; state.assistantDraft = plan;
+    try { persist(); } catch (error) { state.assistantDraft = previous; throw error; }
+    render(true);
+  },
+});
+const assistantHistoryPanel = new AssistantHistoryPanel({
+  library: () => state.assistantHistory, current: assistantWorkspace,
+  disabled: () => assistantUI.busy || Boolean(profileAI.ui?.busy) || Boolean(imageEditorUI?.busy),
+  notice: () => assistantUI.historyWarning || '',
+  save: (label) => {
+    updateAssistantHistory(rememberAssistantDraft(state.assistantHistory, {
+      ...assistantWorkspace(), label, operation: 'manual',
+    }, { budget: assistantHistoryBudget(state.assistantDraft) }));
+    assistantUI.historyWarning = '';
+  },
+  restore: (row) => {
+    replaceAssistantDraft(structuredClone(row.plan), { input: row.input, index: row.index, record: false });
+    assistantUI.error = ''; assistantUI.lintTarget = null;
+    render(true);
+  },
+  update: updateAssistantHistory,
+});
+const assistantRecoveryPanel = new AssistantRecoveryPanel({
+  current: assistantWorkspace, original: () => assistantUI.failureResponse,
+  disabled: () => assistantUI.busy || Boolean(profileAI.ui?.busy) || Boolean(imageEditorUI?.busy),
+  apply: (plan, context) => {
+    replaceAssistantDraft(plan, { operation: 'recovered', input: context.input || '' });
+    assistantUI.failureResponse = ''; assistantUI.error = ''; assistantUI.lintTarget = null;
+    render(true); toast('已采用修复草稿，请核对后生成');
+  },
+});
+const assistantContextPanel = new AssistantContextPanel({
+  disabled: () => assistantUI.busy,
+  read: (contextSelection) => assistantHostRequest('context', { binding: assistantUI.binding, contextSelection }, { timeout: 20 }),
+  preview: () => assistantPresetPanel.click('preview'),
+});
+const assistantScenePanel = new AssistantScenePanel({
+  current: assistantWorkspace,
+  disabled: () => assistantUI.busy || Boolean(profileAI.ui?.busy) || Boolean(imageEditorUI?.busy),
+  revision: () => JSON.stringify([assistantWorkspace(), normalizeAssistant(state.assistant), currentChat().key,
+    assistantContextPanel.selection, assistantScenePanel.instruction, assistantScenePanel.locks,
+    state.provider, state.novelai?.model, state.openai?.model, state.sdwebui?.model, state.model]),
+  analyze: reanalyzeSelectedScene,
+  adopt: async (proposal) => {
+    await validateAssistantContext(proposal.context);
+    if (proposal.revision !== assistantScenePanel.revision()) throw new Error('草稿或设置已变化，请重新分析此画面');
+    replaceAssistantDraft(proposal.plan, { operation: 'reanalyze', index: assistantUI.illustrationIndex || 0,
+      binding: assistantUI.binding, requestId: assistantUI.requestId });
+    render(true); toast('当前画面已更新');
+  },
+});
+const profileUI = { scope: 'global', draft: structuredClone(state.characterProfiles.profiles[0] || null),
+  characters: [], dirty: false, busy: false, error: '', outfitDrafts: {} };
+const outfitDraftSessions = new OutfitDraftSessions();
+const profileAI = new ProfileAIPanel({
+  library: () => state.characterProfiles,
+  settings: () => normalizeAssistant(state.assistant),
+  chatKey: () => currentChat().key || '',
+  directory: () => assistantHostRequest('characters', {}, { timeout: 20 }),
+  readSources: (avatars, signal) => assistantHostRequest('profile-sources', { avatars }, { signal, timeout: 20 }),
+  generate: async (messages, signal, parse) => {
+    if (assistantUI.busy || imageEditorUI?.busy) throw new Error('文字助手正在处理其他任务，请稍后重试');
+    await saveAssistantKey(); signal.throwIfAborted();
+    const options = normalizeAssistant(state.assistant), identity = JSON.stringify(options);
+    const trace = assistantDiagnosticPanel.start('profile', options);
+    try {
+      const prepared = await prepareUtilityMessages(messages, 'profile', options, signal, trace);
+      const raw = await executeAssistantText(prepared, options, signal, trace);
+      signal.throwIfAborted();
+      if (identity !== JSON.stringify(normalizeAssistant(state.assistant))) throw new Error('文字模型配置已改变，请重新生成草稿');
+      trace.step('parse');
+      let rows;
+      try { rows = parse(raw); }
+      catch (error) {
+        if (!assistantUI.error && typeof raw === 'string' && raw.length <= 100000) {
+          assistantUI.failureResponse = raw;
+          writeBrowserCache(storageKey('linghuashi-assistant-failure-v1'), raw);
+        }
+        throw error;
+      }
+      trace.finish(); return rows;
+    } catch (error) { trace.finish(error); throw error; }
+  },
+  promptTools: (picker) => tagPanel.open(picker),
+  save: ({ library, profiles }) => {
+    const previous = structuredClone(state);
+    try { state.characterProfiles = library; useLiveCharacterScene(); persist(); }
+    catch (error) { state = previous; throw error; }
+    profileUI.scope = 'global'; loadProfileDraft(profiles[0].id); render();
+    toast(`已保存 ${profiles.length} 个角色档案`);
+  },
+});
+let apiEditRevision = 0;
+let apiSyncWork = Promise.resolve();
+const chatRequests = new Map();
+const chatValidations = new Map();
+const chatInbox = [];
+let processingChat = false;
+let tasksReady;
+let taskError = '';
+let taskRefreshing = false;
+let taskRefreshWork;
+const taskPersistence = new TaskPersistence({
+  request: isInstalled() ? storageRequest : createBrowserTaskRequest(storageKey('linghuashi-tasks-v1')),
+  settings: () => ({ generationMode: state.generationMode, queueInterval: state.queueInterval, concurrency: state.concurrency }),
+  readKey: (provider, ref) => credentialRequest('read', provider, { ref }),
+});
+const taskQueue = new GenerationQueue({
+  settings: () => state,
+  run: runGeneration,
+  changed: () => {
+    const job = taskQueue.jobs.find((item) => item.id === activeJobId);
+    if (job) runtimeState = ({ queued: 'queued', running: 'generating', completed: 'success', failed: 'error', cancelled: 'ready', paused: 'ready', uncertain: 'error' })[job.status] || 'ready';
+    if (job?.savedIds?.some((id) => drawings.some((row) => row.id === id))
+      && !['queued', 'running'].includes(job.status)) runtimeState = 'success';
+    for (const item of taskQueue.jobs) {
+      reportChatTask(item);
+      firstSuccess.update(item.id, item.status, item.failurePhase || item.phase);
+    }
+    externalTaskService.report(chatPost);
+    try {
+      const comicUpdate = reconcileComicJobs(state.comicLibrary, taskQueue.jobs);
+      if (comicUpdate) {
+        state.comicLibrary = comicUpdate; pendingSave.schedule();
+        if (state.page === 'comic') void comicPanel.refreshAssets();
+      }
+    } catch (error) {
+      comicPanel.fail(new Error(`图片已保留在绘图管理，漫画关联暂未更新：${error.message}`));
+    }
+    void syncTaskImages().catch((error) => {
+      taskError = `图片已保存，显示暂未同步：${error.message}`;
+      refreshBackgroundStatus();
+    });
+    refreshBackgroundStatus();
+  },
+  cancel: cancelComfyPending,
+  persistence: taskPersistence,
+});
+const syncTaskImages = createTaskImageSync({
+  tasks: () => taskQueue.jobs, images: () => drawings, location: () => state.cacheLocation,
+  ready: () => libraryReady,
+  reload: (refresh) => reloadDrawings(refresh),
+  select: (jobs) => {
+    const current = jobs.find((job) => job.id === activeJobId);
+    if (current?.savedIds.some((id) => drawings.some((row) => row.id === id))) {
+      activeDrawingId = current.savedIds.find((id) => drawings.some((row) => row.id === id));
+      if (!['queued', 'running'].includes(current.status)) runtimeState = 'success';
+      refreshBackgroundStatus();
+    }
+  },
+  notify: notifyImagesChanged,
+});
+const externalTaskService = createExtensionTaskService({
+  queue: taskQueue, state: () => state,
+  ready: async () => { await libraryReady; await tasksReady; },
+  refresh: async () => {
+    if (workbenchPanel.ui.busy) throw apiError('BUSY', '正在保存组合任务，请稍后重试');
+    await refreshTasks();
+    if (taskError) throw apiError('STORAGE_UNAVAILABLE', taskError);
+  },
+  prepare: prepareExternalGeneration,
+  create: async (plan, id) => {
+    const record = await taskPersistence.create(plan, id);
+    const chat = chatRequests.get(plan.chatRequestId);
+    if (chat) chat.jobId = record.id;
+    return record;
+  },
+  abandon: (plan, error) => {
+    if (plan.chatRequestId) {
+      chatPost('linghuashi:chat-task', { requestId: plan.chatRequestId, binding: plan.chatBinding,
+        status: error.name === 'AbortError' ? 'cancelled' : 'failed', error: error.message });
+      chatRequests.delete(plan.chatRequestId);
+    }
+  },
+  result: async (job) => {
+    const saved = await drawingLibrary.list(job.plan.storageLocation);
+    const rows = (job.savedIds || []).map((id) => saved.find((row) => row.id === id));
+    if (!rows.length || rows.some((row) => !row)) throw apiError('RESULT_UNAVAILABLE', '结果图片已清理或位于其他设备', job.id);
+    return { task: publicExtensionTask(job), images: rows.map((row) => ({
+      id: row.id, width: row.width, height: row.height, mime: row.blob.type,
+      storageLocation: job.plan.storageLocation, parameters: publicImageParameters(row.snapshot),
+      ...(job.plan.storageLocation === 'server' ? { url: row.srcURL, thumbnailUrl: row.thumbnailURL }
+        : { blob: row.blob, thumbnail: row.thumbnail }),
+    })) };
+  },
+  capabilities: () => extensionCapabilities(state, credentials),
+  presets: (provider) => extensionPresets(state, provider),
+});
+const workbenchPanel = new WorkbenchPanel({
+  getDraft: () => state.workbench,
+  setDraft: (draft) => { const previous = state.workbench; state.workbench = draft; try { persist(); } catch (error) { state.workbench = previous; throw error; } },
+  getSnapshot: () => captureSnapshot(state),
+  cards: () => allTagTemplates(state.tagLibrary), artists: () => state.artistLibrary,
+  identity: () => JSON.stringify([captureSnapshot(state), state.connections[state.provider], credentialState[state.provider].revision, state.cacheLocation]),
+  submit: enqueueBatch, jobs: () => taskQueue.jobs, queue: taskQueue,
+  saveCandidate: (name, row, preview) => {
+    if (!row.candidate) throw new Error('候选组合不存在，请重新预览');
+    const previous = state.artistLibrary;
+    state.artistLibrary = saveArtist(previous, { id: randomUUID(), name, category: '画风探索',
+      ...row.candidate, target: preview.rows[0].snapshot.provider });
+    try { persist(); } catch (error) { state.artistLibrary = previous; throw error; }
+  },
+  render: () => render(true),
+});
+const comicChapterStore = new ComicChapterStore({ request: isInstalled() ? storageRequest : null, local: new BackupStore() });
+const backupPanel = new BackupPanel({
+  getState: () => state, getLayout: () => config,
+  assets: referenceAssets, library: drawingLibrary,
+  ready: async () => { await libraryReady; await tasksReady; },
+  flush: async () => {
+    for (const provider of CONNECTION_PROVIDERS) await saveConnection(provider);
+    await saveAssistantKey(); persist();
+  },
+  active: () => taskQueue.jobs.some((job) => ['running', 'queued'].includes(job.status))
+    || assistantUI.busy || imageEditorUI?.busy || imageEditorUI?.submitting || processingPanel.busy || presetBusy || workbenchPanel.ui.busy
+    || comicPanel.busy || comicPanel.submitting || localToolsPanel.busy,
+  tasks: () => taskPersistence.list(),
+  exportDrafts: async () => { await recoveryPanel.ready; return recoveryBundle(recoveryPanel.selectedRows()); },
+  importDrafts: (bundle) => recoveryPanel.receive(bundle),
+  exportComicChapters: () => comicChapterStore.bundle(state.comicLibrary),
+  restoreComicChapters: async (library, bundle, imageIds, destination) => {
+    const next = structuredClone(library);
+    const store = destination === 'browser' ? new ComicChapterStore({ local: comicChapterStore.local, location: 'browser' }) : comicChapterStore;
+    for (const [index, row] of next.shelved.entries()) {
+      const record = bundle.find((entry) => entry.key === row.key)?.record;
+      if (!record) continue;
+      const project = structuredClone(record.project);
+      Object.assign(project, { id: row.id, seriesId: row.seriesId, chapter: row.chapter, archived: row.archived });
+      for (const panel of project.panels) {
+        const rewrite = (ref) => ref && imageIds.has(ref.id) ? { ...ref, id: imageIds.get(ref.id), location: destination } : ref;
+        panel.image = rewrite(panel.image); panel.versions = panel.versions.map(rewrite); panel.jobs = [];
+      }
+      next.shelved[index] = await store.put(project);
+    }
+    return validateComicLibrary(next);
+  },
+  applyState: async (next) => {
+    const previous = state;
+    state = { ...next, page: 'settings' };
+    try {
+      // Refresh transient credentials before persist synchronizes connection fields.
+      for (const provider of CONNECTION_PROVIDERS) {
+        credentials[provider].endpoint = state.connections[provider].endpoint;
+        credentials[provider].auth = state.connections[provider].auth || 'none';
+      }
+      await restoreCredentials(); persist();
+    } catch (error) { state = previous; await restoreCredentials(); throw error; }
+    artistUI.draft = structuredClone(state.artistLibrary[0] || null); artistUI.dirty = false;
+    profileUI.draft = structuredClone(state.characterProfiles.profiles[0] || null); profileUI.dirty = false;
+    outfitDraftSessions.clear();
+    comicPanel.outfitDrafts = {};
+    generationVerified = null; resetConnection(); advancedPanel.resetMask();
+    comicPanel.leave(); comicPanel.candidate = null; comicPanel.confirm = null;
+    assistantUI.binding = null; assistantUI.requestId = null;
+    delete state.assistantBinding; delete state.assistantRequestId;
+  },
+  applyLayout: async (value) => {
+    if (value) {
+      config = value;
+      if (isInstalled()) postWindowMessage(window.parent, { type: 'linghuashi:restore-layout', layout: value });
+    }
+  },
+  importParameters: (snapshot) => { restoreSnapshot(state, snapshot); persist(); showPage('generate'); },
+  reload: async () => { serverPolicySignature = null; await reloadDrawings(); await syncStoragePolicy(); chatPost('linghuashi:images-changed'); },
+  render: () => render(true), notify: toast,
+});
+
+const settingsResetPanel = new SettingsResetPanel({
+  notify: toast,
+  apply: async (scopes) => {
+    const busy = () => backupPanel.active() || backupPanel.ui.busy || backupPanel.ui.restoring
+      || drawingUI.busy || cleanupBusy || profileAI.ui?.busy || processingChat || chatInbox.length > 0;
+    if (busy()) throw new Error('请等待当前生图、分析、编辑或备份任务完成后再重置');
+    await backupPanel.ready();
+    await apiSyncWork;
+    await backupPanel.flush();
+    if (busy()) throw new Error('任务正在进行，设置尚未重置，请完成后再试');
+    const patch = settingsResetPatch(state, scopes), previous = state;
+    state = { ...state, ...patch };
+    try {
+      persist();
+      if (configSaveState === 'error') throw new Error('设置未能保存，请检查设备存储后重试');
+    } catch (error) {
+      state = previous;
+      try { persist(); } catch {}
+      throw error;
+    }
+    if (scopes.includes('generation')) { advancedPanel.resetMask(); outfitDraftSessions.clear(); }
+    if (scopes.includes('assistant')) {
+      taskPromptPanel.close();
+      taskPromptPanel.drafts.clear(); taskPromptPanel.baselines.clear();
+      for (const task of Object.keys(taskPromptPanel.draftStore?.value.entries || {})) taskPromptPanel.draftStore.remove(task);
+      taskPromptPanel.previewResult = null;
+      assistantPresetPanel.epoch++;
+      assistantPresetPanel.ui.preset = null;
+      assistantPresetPanel.ui.loading = false;
+      assistantPresetPanel.ui.error = '';
+      assistantUI.error = '';
+    }
+    render(true);
+    const sync = scopes.includes('general')
+      ? await Promise.allSettled([taskPersistence.configure(), syncStoragePolicy()]) : [];
+    const failure = sync.find((result) => result.status === 'rejected');
+    return failure ? `设置已重置，接口与作品已保留；调度或清理设置同步未完成：${failure.reason.message}`
+      : '所选设置已恢复默认，接口、已选模型与作品资料已保留';
+  },
+});
+
+const readerPanel = new ReaderPanel({
+  chat: currentChat,
+  settings: () => state.readerSettings,
+  update: (value) => { state.readerSettings = value; pendingSave.schedule(); },
+  request: (action, value, signal) => assistantHostRequest(action, value, { signal, timeout: 300 }),
+  palette: () => {
+    const css = getComputedStyle(document.documentElement);
+    return Object.fromEntries(['bg', 'text', 'muted', 'border', 'accent'].map((key) => [key, css.getPropertyValue(`--${key}`).trim()]));
+  },
+  save: saveBlob,
+});
+
+let preparedComicGeneration = null;
+function comicGenerationIdentity() {
+  const provider = state.provider, { keyRef, ...connection } = state.connections[provider] || {};
+  return JSON.stringify([captureSnapshot(state), connection, credentialState[provider].revision,
+    credentials[provider].endpoint, credentials[provider].auth, state.openaiEndpoint, state.openaiPath,
+    state.openaiTimeout, state.cacheLocation, state.enabled]);
+}
+const comicPanel = new ComicPanel({
+  chapterStore: comicChapterStore,
+  flushLibrary: () => pendingSave.flush(),
+  saveStatus: () => configSaveInfo(),
+  retrySave: () => persist(),
+  workspaceKey: storageKey('linghuashi-comic-workspace-v1'),
+  experience: () => state.experience,
+  getLibrary: () => state.comicLibrary,
+  update: (value) => {
+    const previous = state.comicLibrary;
+    state.comicLibrary = validateComicLibrary(value);
+    if (JSON.stringify(state).length > 2000000) {
+      state.comicLibrary = previous; throw new Error('配置空间已满，请先备份并精简漫画项目或其他配置');
+    }
+    pendingSave.schedule();
+  },
+  currentScene: () => captureSnapshot(state).characterScene,
+  getProfiles: () => effectiveProfiles(state.characterProfiles, currentChat().key),
+  assistantIdentity: () => {
+    const { keyRef, ...settings } = normalizeAssistant(state.assistant);
+    return JSON.stringify([settings, assistantUI.keyRevision, assistantUI.tavernCurrent]);
+  },
+  referenceCapability: () => {
+    const snapshot = captureSnapshot(state), params = snapshot.params || snapshot.config.params;
+    const cap = modelCapabilities(snapshot.provider, params.model, advancedOf(snapshot));
+    return snapshot.provider === 'novelai' && cap.character ? '当前 NovelAI V4.5 支持项目人物参考图'
+      : snapshot.provider === 'openai' && cap.image ? '当前 OpenAI 兼容接口已启用图片编辑参考'
+      : '当前接口或模型未启用人物参考图能力';
+  },
+  storeReference: async (file, signal) => {
+    const prepared = await normalizeReferenceImage(file);
+    signal.throwIfAborted();
+    const asset = await referenceAssets.put(prepared.blob, { ...prepared, name: file.name });
+    signal.throwIfAborted(); return asset;
+  },
+  providerTitle: () => GENERATION_MODES.find((mode) => mode.id === state.provider)?.title || state.provider,
+  setup: () => {
+    const snapshot = captureSnapshot(state), params = snapshot.params || snapshot.config.params;
+    const connection = state.connectionProfiles[state.provider]?.find((row) => row.id === state.connectionProfileIds[state.provider]);
+    return { assistant: state.assistant, currentModel: assistantUI.tavernCurrent,
+      budget: assistantUI.budget?.operation === 'comic' ? assistantUI.budget : null,
+      image: { connection: connection?.name || '当前配置', model: params.model || state.model,
+        size: state.provider === 'openai' ? openAISize(params) : params.width && params.height ? `${params.width} × ${params.height}` : '',
+        steps: params.steps, location: state.cacheLocation, storage: state.cacheLocation === 'server' ? '酒馆服务器' : '当前浏览器' } };
+  },
+  navigate: (page) => openWorkflowPage(page, 'comic'),
+  editRules: () => taskPromptPanel.open('comic'),
+  inspectModel: async () => {
+    const result = await assistantHostRequest('models', { refresh: false }, { timeout: 20 });
+    assistantUI.tavernCurrent = result.current || '';
+    assistantUI.tavernIdentity = result.signature || result.source || '';
+  },
+  jobs: () => taskQueue.jobs, cancelTask: (id) => taskQueue.cancel(id),
+  source: (range, signal) => assistantHostRequest('comic-source', { range }, { signal, timeout: 30 }),
+  storyboard: async (project, signal) => {
+    if (!state.enabled) throw new Error('请先在插件设置中启用灵画师');
+    if (assistantUI.busy || profileAI.busy || imageEditorUI?.busy) throw new Error('提示词助手正在处理其他任务，请稍后重试');
+    await saveAssistantKey();
+    const options = comicAssistantOptions(state.assistant, project), trace = assistantDiagnosticPanel.start('comic', options);
+    assistantUI.busy = true;
+    try {
+      const messages = await prepareUtilityMessages(comicStoryboardMessages(project, options), 'comic', options, signal, trace);
+      const raw = await executeAssistantText(messages, options, signal, trace);
+      signal.throwIfAborted(); trace.step('parse');
+      const result = parseComicStoryboard(raw, project);
+      trace.finish(null, result.panels.length); return result;
+    } catch (error) { trace.finish(error); error.assistantReport = trace.report(); throw error; }
+    finally { assistantUI.busy = false; }
+  },
+  previewBudget: async (project) => {
+    const options = comicAssistantOptions(state.assistant, project);
+    const messages = await prepareUtilityMessages(comicStoryboardMessages(project, options), 'comic', options);
+    return updateAssistantBudget(messages, options, 'comic', project.panelCount);
+  },
+  rewritePanel: async (project, panelId, instruction, locks, signal) => {
+    if (!state.enabled) throw new Error('请先在插件设置中启用灵画师');
+    if (assistantUI.busy || profileAI.busy || imageEditorUI?.busy) throw new Error('提示词助手正在处理其他任务，请稍后重试');
+    await saveAssistantKey();
+    const options = comicAssistantOptions(state.assistant, project), trace = assistantDiagnosticPanel.start('comic', options);
+    assistantUI.busy = true;
+    try {
+      const messages = await prepareUtilityMessages(comicPanelRewriteMessages(project, panelId, instruction, locks, options), 'comic', options, signal, trace);
+      const raw = await executeAssistantText(messages, options, signal, trace);
+      signal.throwIfAborted(); trace.step('parse');
+      const result = parseComicPanelRewrite(raw, project, panelId, locks);
+      trace.finish(null, 1); return result;
+    } catch (error) { trace.finish(error); error.assistantReport = trace.report(); throw error; }
+    finally { assistantUI.busy = false; }
+  },
+  submit: enqueueComicPanels,
+  identity: comicGenerationIdentity,
+  preflight: async (project, ids) => {
+    if (!state.enabled) throw new Error('插件尚未启用，请在插件设置中启用');
+    await libraryReady; await tasksReady;
+    if (!drawingLibrary.db || drawingUI.loading) throw new Error('图片存储尚未准备好，请稍候或前往调试工具检测存储');
+    preparedComicGeneration = null;
+    const identity = comicGenerationIdentity(), signature = comicGenerationSignature(project, ids, identity);
+    const provider = state.provider, credential = { ...credentials[provider] }, storageLocation = state.cacheLocation;
+    const connection = provider === 'sdwebui' ? structuredClone(state.connections.sdwebui)
+      : { endpoint: state.openaiEndpoint, path: state.openaiPath, timeout: state.openaiTimeout };
+    const base = captureSnapshot(state), rows = [];
+    for (const id of ids) {
+      const panel = project.panels.find((row) => row.id === id);
+      if (!panel) throw new Error('画格已变化，请重新选择');
+      const snapshot = comicPanelSnapshot(base, project, panel);
+      const advanced = advancedOf(snapshot);
+      if (advanced.mode === 'reference') {
+        for (const ref of advanced.referenceKind === 'character' ? [advanced.character] : advanced.references) {
+          try { await referenceAssets.get(ref); }
+          catch { throw new Error(`第 ${project.panels.indexOf(panel) + 1} 格人物参考图无法读取，请重新上传或取消项目参考图`); }
+        }
+      }
+      rows.push({ panelId: id, plan: await prepareGenerationPlan(snapshot, credential, connection) });
+    }
+    if (identity !== comicGenerationIdentity()) throw new Error('生图接口配置已变化，请重新选择并确认');
+    const token = randomUUID();
+    preparedComicGeneration = { token, signature, provider, storageLocation, credential, rows };
+    return { token, preview: rows.map(({ panelId, plan }) => comicPlanPromptPreview(plan, panelId)) };
+  },
+  listImages: async (location) => { await libraryReady; return drawingLibrary.list(location); },
+  favoriteImage: async (id, location) => {
+    await libraryReady;
+    await drawingLibrary.setFavorite(id, true, location);
+    if (location === state.cacheLocation) await reloadDrawings();
+  },
+  importImages: async (project, blobs, signal) => {
+    await libraryReady;
+    const location = state.cacheLocation, rows = [], refs = new Map(), shared = new Map();
+    for (const [key, blob] of blobs) {
+      signal.throwIfAborted();
+      if (shared.has(blob)) { refs.set(key, shared.get(blob)); continue; }
+      const row = await makeDrawing(blob, { title: `${project.title} · 导入配图`, favorite: true, snapshot: null });
+      const ref = { id: row.id, location };
+      rows.push(row); refs.set(key, ref); shared.set(blob, ref);
+    }
+    signal.throwIfAborted();
+    if (location !== state.cacheLocation) throw new Error('存储位置已变化，请重新导入漫画');
+    await drawingLibrary.add(rows, location);
+    await reloadDrawings();
+    return refs;
+  },
+  materialize: (row, signal) => drawingLibrary.materialize(row, signal), save: saveBlob,
+  showQueue: () => showPage('generate'),
+});
+refreshComicSave = () => comicPanel.refreshSaveStatus();
+subscribeUIStateSync(() => refreshSaveStatus());
+
+const esc = escapeHtml;
+const button = (name, label, action, classes = '', attrs = '') => `<button type="button" class="ui-button ${classes}" data-action="${action}" ${attrs}>${icon(name)}<span>${label}</span></button>`;
+const iconButton = (name, title, action, attrs = '') => `<button type="button" class="ui-icon-button" data-action="${action}" title="${title}" aria-label="${title}" ${attrs}>${icon(name)}</button>`;
+const field = (label, body, classes = '') => `<label class="ui-field ${classes}"><span>${label}</span>${body}</label>`;
+const activeDrawing = () => drawings.find((item) => item.id === activeDrawingId);
+const statusData = () => ({
+  ready: { label: '就绪', icon: 'circle', class: 'neutral' },
+  queued: { label: '排队中', icon: 'clock-3', class: 'warning' },
+  generating: { label: '生成中', icon: 'loader-circle', class: 'accent' },
+  success: { label: '已完成', icon: 'circle-check', class: 'accent' },
+  error: { label: '生成失败', icon: 'circle-alert', class: 'danger' },
+})[runtimeState];
+const statusBadge = () => {
+  if (generationSubmitting) return `<span class="ui-status accent">${icon('loader-circle', 'spin')}准备提交</span>`;
+  if (runtimeState === 'ready') return readinessBadge(setupReadiness().image);
+  const item = statusData();
+  return `<span class="ui-status ${item.class}">${icon(item.icon, runtimeState === 'generating' ? 'spin' : '')}${item.label}</span>`;
+};
+const chibiImages = {
+  whale: { eating: chibiEating, thinking: chibiThinking, sad: chibiSad, excited: chibiExcited, deadpan: chibiDeadpan },
+  claude: { eating: claudeSmile, thinking: claudeReading, sad: claudePuzzled, excited: claudeSharing, deadpan: claudeCompanion },
+  gemini: { eating: geminiGreeting, thinking: geminiThinking, sad: geminiShy, excited: geminiSmile, deadpan: geminiReading, heart: geminiShy },
+  gpt: { eating: gptSmug, thinking: gptFocused, sad: gptDeadpan, excited: gptWings, deadpan: gptDeadpan, shy: gptShy },
+  glm: { eating: glmSmug, thinking: glmReport, sad: glmDisdain, excited: glmShy, deadpan: glmSleepy },
+  kimi: { eating: kimiPrism, thinking: kimiThinking, sad: kimiThinking, excited: kimiSmile, deadpan: kimiReading, music: kimiMusic },
+  grok: { eating: grokSarcastic, thinking: grokFocused, sad: grokSarcastic, excited: grokPeace, deadpan: grokRebellious, mischievous: grokMischievous },
+  doubao: { eating: doubaoPointing, thinking: doubaoFocused, sad: doubaoPointing, excited: doubaoHeart, deadpan: doubaoTsundere, shy: doubaoShy },
+  ancient: { eating: ancientCalm, thinking: ancientThinking, sad: ancientConcerned, excited: ancientSmile, deadpan: ancientWaiting },
+};
+const statusPose = () => ({ ready: 'eating', queued: 'deadpan', generating: 'thinking', success: 'excited', error: 'sad' })[runtimeState] || 'thinking';
+const chibi = (pose, classes = '') => `<img class="chibi-mascot ${classes}" data-chibi-pose="${pose}" data-mascot-theme="${state.characterTheme}" src="${chibiImages[state.characterTheme][pose]}" alt="" aria-hidden="true" width="180" height="200" decoding="async" draggable="false" />`;
+
+function decoratePageHeading() {
+  const title = host.querySelector('.page-heading > div:first-child');
+  if (!title) return;
+  const pose = state.page === 'generate'
+    ? runtimeState === 'ready' ? 'thinking' : statusPose()
+    : ({ settings: 'eating', connection: 'thinking', characters: ({ gemini: 'heart', gpt: 'shy', doubao: 'shy' })[state.characterTheme] || 'excited', styles: ({ kimi: 'music', grok: 'mischievous' })[state.characterTheme] || 'excited', gallery: 'excited' })[state.page] || 'eating';
+  const group = document.createElement('div');
+  group.className = 'heading-title';
+  title.replaceWith(group);
+  group.innerHTML = chibi(pose, 'heading-mascot');
+  group.append(title);
+}
+
+const recoveryPanel = new RecoveryDraftPanel({
+  collect: () => {
+    const rows = [], entries = taskPromptPanel.draftStore?.value.entries || {};
+    for (const [task, entry] of Object.entries(entries)) rows.push({ id: `rules:${task}`, kind: 'rules',
+      title: ASSISTANT_OPERATIONS.find(([id]) => id === task)?.[1] || task, updatedAt: entry.updatedAt, data: { task, entry } });
+    if (state.assistantDraft || state.assistantInput?.trim()) rows.push({ id: 'assistant:current', kind: 'assistant',
+      title: '助手当前画面', updatedAt: state.updatedAt, data: { plan: state.assistantDraft, input: state.assistantInput || '' } });
+    for (const entry of state.assistantHistory || []) rows.push({ id: `assistant:${entry.id}`, kind: 'assistant',
+      title: entry.label || '助手历史画面', updatedAt: entry.createdAt, data: { plan: entry.plan, input: entry.input } });
+    if (assistantUI.failureResponse) rows.push({ id: 'response:assistant', kind: 'response', title: '助手最近失败回复',
+      updatedAt: state.updatedAt, data: { response: assistantUI.failureResponse } });
+    for (const project of state.comicLibrary.projects) {
+      const workspace = comicPanel.workspace.get(project.id);
+      if (workspace && (workspace.draft.candidate || workspace.draft.rewrite || workspace.draft.failureResponse || workspace.past.length)) {
+        rows.push({ id: `comic:${project.id}`, kind: 'comic', title: project.title, updatedAt: workspace.updatedAt, data: { project, workspace } });
+      }
+    }
+    return rows;
+  },
+  flush: async () => { taskPromptPanel.draftStore?.flush(); comicPanel.stashDraft(); comicPanel.workspace.flush(); pendingSave.flush(); },
+  active: () => assistantUI.busy || comicPanel.busy || comicPanel.submitting || taskQueue.jobs.some((row) => ['running', 'queued'].includes(row.status)),
+  restore: async (row) => {
+    if (row.kind === 'rules') {
+      const { task, entry } = row.data;
+      if (!row.local) {
+        taskPromptPanel.draftStore.set(task, entry.draft, entry.baseline); taskPromptPanel.draftStore.flush();
+        taskPromptPanel.drafts.delete(task); taskPromptPanel.baselines.delete(task);
+      }
+      taskPromptPanel.open(task);
+    } else if (row.kind === 'assistant') {
+      if (state.assistantDraft) state.assistantHistory = rememberAssistantDraft(state.assistantHistory,
+        { plan: state.assistantDraft, input: state.assistantInput, operation: 'checkpoint' });
+      state.assistantDraft = structuredClone(row.data.plan); state.assistantInput = row.data.input;
+      assistantUI.binding = null; assistantUI.illustrationIndex = 0; assistantUI.requestId = null;
+      delete state.assistantBinding; delete state.assistantRequestId; persist(); showPage('assistant');
+    } else if (row.kind === 'response') {
+      assistantUI.failureResponse = row.data.response; assistantUI.failureOpen = true; showPage('assistant');
+    } else {
+      if (row.local) { comicPanel.stashDraft(); state.comicLibrary.activeId = row.data.project.id; }
+      else {
+        const { project, workspace } = copyComicRecovery(row);
+        const library = saveComicProject(state.comicLibrary, project);
+        if (JSON.stringify({ ...state, comicLibrary: library }).length > 2000000) throw new Error('配置空间不足，请先备份并整理漫画项目');
+        comicPanel.stashDraft(); state.comicLibrary = library;
+        comicPanel.workspace.value.projects.push(workspace); comicPanel.workspace.flush();
+      }
+      comicPanel.loadDraft(); comicPanel.clearPreviews(); persist(); showPage('comic');
+    }
+  },
+  render: () => render(true),
+});
+
+function persist() {
+  pendingSave.cancel();
+  for (const provider of CONNECTION_PROVIDERS) syncConnection(provider);
+  state.updatedAt = Date.now();
+  const { storageUsage, storageStatus, assistantHistory, ...saved } = state;
+  const serialized = JSON.stringify(saved);
+  if (serialized.length > 2000000) throw new Error('配置空间已满，请导出并精简预设或画师串库');
+  if (persistedAssistantHistory !== assistantHistory) {
+    persistAssistantArchive(UI_STORAGE_NAME, assistantHistory);
+    persistedAssistantHistory = assistantHistory;
+  }
+  configCacheAvailable = persistUIState(UI_STORAGE_NAME, saved, serialized);
+  configSaveState = configCacheAvailable ? 'saved' : isInstalled() ? 'syncing' : 'error';
+  refreshSaveStatus();
+  refreshSetupSummary();
+}
+
+const promptProcessingPanel = new PromptProcessingPanel({
+  getSettings: () => state.promptProcessing,
+  setSettings: (value) => {
+    const previous = state.promptProcessing;
+    state.promptProcessing = validatePromptProcessing(value);
+    try { persist(); } catch (error) { state.promptProcessing = previous; throw error; }
+    refreshCreationPreviewState();
+  },
+  preview: () => previewCreation(captureSnapshot(state), {
+    profiles: effectiveProfiles(state.characterProfiles, currentChat().key),
+    processing: state.promptProcessing, tagLibrary: state.tagLibrary,
+  }),
+  render: () => render(true), notify: (message) => toast(message),
+});
+
+function configSaveInfo() {
+  const sync = getUIStateSync();
+  const local = configCacheAvailable;
+  if (configSaveState === 'pending') return { state: 'pending', message: '有修改待保存', retry: false };
+  if (configSaveState === 'error') return { state: 'error', message: '保存未完成，请重试或导出项目', retry: true };
+  if (!isInstalled()) return { state: local ? 'saved' : 'error', message: local ? '已保存本设备' : '本设备未能保存，请重试或导出项目', retry: !local };
+  const prefix = local ? '本设备已保存' : '本设备缓存不可用';
+  if (['error', 'unconfirmed'].includes(sync.status)) return { state: 'error', message: `${prefix} · 酒馆同步待重试`, retry: true };
+  if (sync.status === 'received') return { state: local ? 'saved' : 'syncing', message: `${prefix} · 酒馆已接收`, retry: !local };
+  return { state: 'syncing', message: `${prefix} · 等待酒馆接收`, retry: false };
+}
+function refreshSaveStatus() {
+  const info = configSaveInfo();
+  host?.querySelectorAll('[data-workspace-save]').forEach((node) => {
+    node.textContent = info.message; node.dataset.saveState = info.state;
+  });
+  refreshComicSave();
+}
+
+function assistantReadyIdentity(options = state.assistant) {
+  return JSON.stringify([options.source, options.endpoint.trim(), options.apiTransport,
+    options.source === 'api' ? options.model.trim() : options.tavernModel.trim() || assistantUI.tavernCurrent,
+    options.source === 'api' ? assistantUI.key : 'tavern', options.responseMode]);
+}
+
+function currentImageReceipt() {
+  try {
+    const provider = state.provider, snapshot = provider === 'comfyui' ? { provider, config: state.comfyui } : { provider, params: state[provider] };
+    const params = snapshot.params || snapshot.config.params;
+    const current = credentials[provider], connection = state.connections[provider];
+    let url, authorization = '';
+    if (provider === 'novelai') {
+      const route = resolvedService || resolveNovelAIService(current.key, current.endpoint);
+      if (!route.endpoint) return '';
+      url = `${route.endpoint}/ai/generate-image`; authorization = `Bearer ${current.key.trim()}`;
+    } else if (provider === 'openai') {
+      const advanced = advancedOf(snapshot);
+      url = openAIURLs(state.openaiEndpoint, advanced.mode === 'text' ? state.openaiPath : advanced.editPath).generation;
+      authorization = current.key.trim() ? `Bearer ${current.key.trim()}` : '';
+    } else if (provider === 'sdwebui') {
+      url = `${sdwebuiBase(current.endpoint)}${buildSDWebUIRequest(snapshot).path}`;
+      authorization = sdwebuiHeaders(connection, current.key).Authorization || '';
+    } else {
+      url = `${normalizeComfyEndpoint(current.endpoint)}/prompt`;
+      authorization = current.auth === 'bearer' ? `Bearer ${current.key.trim()}` : '';
+    }
+    return JSON.stringify([provider, url, params.model || params.checkpoint || snapshot.config?.name || 'SDWebUI 当前模型', authorization]);
+  } catch { return ''; }
+}
+
+function setupReadiness() {
+  const provider = state.provider, current = credentials[provider], cs = credentialState[provider];
+  const params = provider === 'comfyui' ? state.comfyui.params : state[provider];
+  const route = provider === 'novelai' ? resolveNovelAIService(current.key, current.endpoint) : null;
+  return {
+    verification: firstSuccess.result(verificationContext(), state.experience.goal === 'chat'),
+    image: imageReadiness({ provider, endpoint: provider === 'openai' ? state.openaiEndpoint : current.endpoint,
+      hasKey: Boolean(current.key.trim()), auth: current.auth, enabled: state.enabled, model: params.model || '',
+      credentialError: cs.error ? cs.message : cs.dirty ? '秘钥正在保存，请稍候' : '',
+      route: resolvedService ? 'resolved' : route?.kind, workflowReady: Boolean(state.comfyui?.graph && state.comfyui?.mapping?.positive),
+      probe: connectionStatus, generated: verifiedImages.has(currentImageReceipt()) || provider === 'openai' && openAIGenerationVerified() }),
+    assistant: assistantReadiness({ ...state.assistant, hasKey: Boolean(assistantUI.key.trim()),
+      model: state.assistant.source === 'api' ? state.assistant.model : state.assistant.tavernModel,
+      tavernCurrent: assistantUI.tavernCurrent, installed: isInstalled(), enabled: state.enabled,
+      modelSource: assistantUI.models.length ? assistantUI.modelSource : '', models: assistantUI.models, modelsError: assistantUI.modelsError,
+      busy: assistantUI.busy, succeeded: verifiedAssistant.has(assistantReadyIdentity()),
+      credentialError: assistantUI.keyError ? assistantUI.keyStatus : '' }),
+    storage: storageReadiness({ location: state.cacheLocation, installed: isInstalled(), loading: drawingUI.loading,
+      error: drawingUI.error, written: firstSuccess.storageWritten(storageVerificationContext()) }),
+  };
+}
+
+function verificationContext(plan) {
+  const image = plan ? JSON.stringify([plan.provider, plan.url, plan.model, plan.headers.Authorization || '']) : currentImageReceipt();
+  return JSON.stringify([image, plan?.storageLocation || state.cacheLocation, plan?.chatBinding?.chatKey || currentChat().key]);
+}
+function storageVerificationContext(location = state.cacheLocation) {
+  return JSON.stringify([currentAccount(), location]);
+}
+function refreshFirstSuccess() {
+  const node = host?.querySelector('[data-first-success-root]');
+  if (!node) return;
+  const result = firstSuccess.result(verificationContext(), state.experience.goal === 'chat');
+  const signature = JSON.stringify([result, state.experience.goal]);
+  if (node.dataset.signature !== signature) {
+    node.dataset.signature = signature; node.innerHTML = renderFirstSuccess(result, state.experience.goal); paintIcons(node);
+  }
+}
+
+function setupSummary() {
+  const provider = state.provider, params = provider === 'comfyui' ? state.comfyui.params : state[provider];
+  const connection = state.connectionProfiles[provider]?.find((row) => row.id === state.connectionProfileIds[provider]);
+  const presets = state[{ novelai: 'novelaiPresets', openai: 'openaiPresets', comfyui: 'comfyPresets', sdwebui: 'sdwebuiPresets' }[provider]] || [];
+  const presetId = state[{ novelai: 'novelaiPresetId', openai: 'openaiPresetId', comfyui: 'comfyPresetId', sdwebui: 'sdwebuiPresetId' }[provider]];
+  const assistant = state.page === 'comic' && comicPanel.project ? comicAssistantOptions(state.assistant, comicPanel.project) : state.assistant;
+  return {
+    image: `${GENERATION_MODES.find((mode) => mode.id === provider)?.title || provider}${connection ? ` · ${connection.name}` : ''}`,
+    model: params.model || params.checkpoint || (provider === 'comfyui' ? state.comfyui.name : '') || '跟随服务当前模型',
+    preset: presets.find((row) => row.id === presetId)?.name || '当前参数',
+    text: assistant.source === 'tavern' ? '跟随酒馆接口' : `独立 API · ${assistant.apiTransport === 'tavern' ? '酒馆转发' : '设备直连'}`,
+    textModel: assistant.source === 'api' ? assistant.model || '尚未选择' : assistant.tavernModel || assistantUI.tavernCurrent || '酒馆当前模型 · 待读取',
+    textPreset: assistant.presetMode === 'none' ? '仅任务规则与前置要求' : assistant.presetMode === 'current'
+      ? '当前酒馆已开启条目 + 任务规则' : '指定酒馆预设 + 任务规则',
+    storage: state.cacheLocation === 'server' ? '酒馆服务器 · 当前账号' : '浏览器 · 仅当前设备与站点',
+  };
+}
+
+function refreshSetupSummary() {
+  const node = host?.querySelector('[data-setup-root]');
+  if (!node) return;
+  const readiness = setupReadiness(), summary = setupSummary(), signature = JSON.stringify([readiness, summary]);
+  if (node.dataset.signature === signature) return;
+  setupExpanded = node.querySelector('details')?.open ?? setupExpanded;
+  node.dataset.signature = signature;
+  const html = renderReadiness(readiness, summary, setupExpanded);
+  const current = node.querySelector('[data-setup-readiness]');
+  if (current) {
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    for (const selector of ['summary', '.setup-facts', '.setup-checklist']) {
+      const target = current.querySelector(selector);
+      if (target) target.innerHTML = template.content.querySelector(selector).innerHTML;
+    }
+  } else node.innerHTML = html;
+  paintIcons(node);
+}
+
+function experienceToolbar() {
+  return `<div class="experience-toolbar"><div class="experience-level" role="group" aria-label="设置显示范围">
+    ${[['common', '常用设置', 'list-filter'], ['full', '完整设置', 'sliders-horizontal']].map(([id, label, symbol]) =>
+      `<button type="button" data-guide-level="${id}" aria-pressed="${state.experience.level === id}">${icon(symbol)}${label}</button>`).join('')}</div>
+    <span class="workspace-save-state" data-workspace-save data-save-state="${configSaveState}" role="status"></span></div>`;
+}
+
+function primaryPageAction() {
+  if (state.page === 'generate') return button('sparkles', !state.enabled ? '插件已关闭'
+    : generationSubmitting ? '准备提交…' : ['queued', 'generating'].includes(runtimeState) ? '加入队列' : '生成图像',
+    'generate', 'primary', !state.enabled || generationSubmitting ? 'disabled' : '');
+  if (state.page === 'assistant') {
+    if (assistantUI.busy) return button('square', '取消', 'assistant-cancel', 'secondary');
+    return button(currentAssistantPlan()?.positive.trim() ? 'image-plus' : 'sparkles',
+      currentAssistantPlan()?.positive.trim() ? '生成图片' : '生成提示词',
+      currentAssistantPlan()?.positive.trim() ? 'assistant-draw' : 'assistant-generate', 'primary',
+      `aria-label="${currentAssistantPlan()?.positive.trim() ? '快捷生成图片' : '快捷生成提示词'}" ${!state.enabled ? 'disabled' : ''}`);
+  }
+  if (state.page === 'comic' && comicPanel.tab === 'read') return '';
+  if (state.page === 'comic') return guideCommand('comic-next', '继续当前步骤', 'arrow-right',
+    comicPanel.busy || comicPanel.submitting ? 'disabled' : '');
+  if (state.page === 'connection') return guideCommand('image-test', '测试连接', 'plug', `aria-label="快捷测试连接" ${connectionController ? 'disabled' : ''}`);
+  return '';
+}
+
+function openWorkflowPage(page, from = state.page) {
+  if (page !== from) workflowReturn = { page: from, label: from === 'comic' ? '返回漫画工坊' : from === 'assistant' ? '返回助手结果' : '返回上一步' };
+  showPage(page);
+}
+
+function revealSetting(selector) {
+  const node = host?.querySelector(selector);
+  if (!node) return;
+  if (node.tagName === 'DETAILS') node.open = true;
+  node.querySelector(':scope > details')?.setAttribute('open', '');
+  for (let parent = node.parentElement; parent; parent = parent.parentElement) if (parent.tagName === 'DETAILS') parent.open = true;
+  node.scrollIntoView({ block: 'start' });
+}
+
+async function guideAction(action, buttonNode) {
+  pendingSave.flush();
+  if (action === 'open') { state.experience.dismissed = false; state.experience.completed = false; persist(); showPage('settings'); return; }
+  if (action === 'dismiss') { state.experience.dismissed = true; persist(); render(true); return; }
+  if (action === 'complete') {
+    if (!state.experience.goal || !guideSteps(state.experience, { ...setupReadiness(), chat: state }).every(guideStepComplete)) {
+      toast('仍有必需配置需要核对'); return;
+    }
+    state.experience.completed = true; persist(); render(true); return;
+  }
+  if (action === 'return') {
+    const target = workflowReturn?.page; workflowReturn = null;
+    if (target) showPage(target); return;
+  }
+  if (['settings', 'connection', 'generate', 'comic', 'gallery'].includes(action)) {
+    openWorkflowPage(action); return;
+  }
+  if (action === 'assistant') { openWorkflowPage('assistant'); revealSetting('.assistant-configuration'); return; }
+  if (action === 'assistant-config') { if (state.page !== 'assistant') openWorkflowPage('assistant'); revealSetting('.assistant-configuration'); return; }
+  if (action === 'outfit-settings') {
+    if (state.page !== 'generate') openWorkflowPage('generate');
+    revealSetting('.character-selection');
+    host?.querySelector('[data-outfit-field="prompt"]')?.focus({ preventScroll: true }); return;
+  }
+  if (action === 'assistant-models') { await fetchAssistantModels(false); refreshSetupSummary(); return; }
+  if (action === 'image-test') { await checkConnection(true); return; }
+  if (action === 'storage-settings' || action === 'chat-settings' || action === 'backup-settings') {
+    if (state.page !== 'settings') openWorkflowPage('settings');
+    revealSetting(action === 'storage-settings' ? '[aria-labelledby="cache-heading"]'
+      : action === 'chat-settings' ? '[aria-labelledby="display-heading"]' : '[data-backup-fold]');
+    return;
+  }
+  if (action === 'storage-check') { openWorkflowPage('debug'); await debugToolsPanel.runStorage(); return; }
+  if (action === 'image-network' || action === 'assistant-network') {
+    networkDiagnosticPanel.open(networkContext(action === 'image-network' ? state.provider : 'assistant')); return;
+  }
+  if (action === 'task-records') { if (state.page !== 'generate') openWorkflowPage('generate'); revealSetting('.generation-tasks'); return; }
+  if (action === 'task-retry') {
+    const job = taskQueue.jobs.find((row) => row.id === buttonNode?.dataset.guideTask);
+    if (!job || !failureActions({ ...job, message: job.error, phase: job.failurePhase || job.phase }).includes('task-retry')) {
+      toast('请在任务记录核对当前状态'); return;
+    }
+    await libraryReady; activeJobId = job.id; generationIssue = ''; taskQueue.retry(job.id); return;
+  }
+  if (action === 'assistant-response') {
+    const node = host?.querySelector('[data-assistant-failure]');
+    if (node) { node.open = true; assistantUI.failureOpen = true; node.scrollIntoView({ block: 'nearest' }); }
+    return;
+  }
+  if (action === 'assistant-diagnostic') {
+    if (!assistantDiagnosticPanel.focus(assistantUI.failureTrace)) {
+      toast('此失败没有保留调用诊断，请重新执行后查看'); return;
+    }
+    revealSetting('[data-assistant-diagnostic-root]'); return;
+  }
+  if (action === 'comic-next') await comicPanel.action(comicPanel.project ? 'next' : 'new');
+}
+
+function assistantFailureActions() {
+  return failureActions({ scope: 'assistant', message: assistantUI.error,
+    diagnostic: assistantUI.failureTrace?.report() })
+    .filter((action) => action !== 'assistant-response' || assistantUI.failureResponse);
+}
+
+function syncConnection(provider) {
+  state.connections[provider] = normalizeConnection(provider, {
+    ...state.connections[provider],
+    ...(provider === 'openai' ? {
+      endpoint: state.openaiEndpoint, path: state.openaiPath, timeout: state.openaiTimeout,
+    } : {
+      endpoint: credentials[provider].endpoint,
+      ...(provider === 'comfyui' ? { auth: credentials.comfyui.auth, timeout: state.comfyTimeout } : {}),
+      ...(provider === 'sdwebui' ? { auth: credentials.sdwebui.auth } : {}),
+    }),
+  });
+}
+
+export async function restoreCredentials() {
+  await Promise.all(CONNECTION_PROVIDERS.map(async (provider) => {
+    const saved = state.connections[provider];
+    Object.assign(credentials[provider], { endpoint: saved.endpoint, auth: saved.auth || 'none' });
+    if (provider === 'openai') {
+      state.openaiEndpoint = saved.endpoint;
+      state.openaiPath = saved.path;
+      state.openaiTimeout = saved.timeout;
+    } else if (provider === 'comfyui') state.comfyTimeout = saved.timeout;
+    try {
+      credentials[provider].key = await credentialRequest('read', provider, { ref: saved.keyRef });
+      credentialState[provider].message = saved.keyRef ? credentialSavedMessage(saved.keyRef) : '';
+      credentialState[provider].error = false;
+    } catch (error) {
+      credentialState[provider].message = credentialFailure(error, 'read').message;
+      credentialState[provider].error = true;
+    }
+  }));
+  try {
+    assistantUI.key = await credentialRequest('read', 'assistant', { ref: state.assistant.keyRef });
+    assistantUI.keyStatus = state.assistant.keyRef ? credentialSavedMessage(state.assistant.keyRef) : '';
+    assistantUI.keyError = false;
+  } catch (error) { assistantUI.keyStatus = credentialFailure(error, 'read').message; assistantUI.keyError = true; }
+  await localToolsPanel.restore();
+  await syncAssistantConnection();
+}
+
+function resetAssistantModels() {
+  assistantUI.modelsController?.abort();
+  assistantUI.modelsController = null;
+  assistantUI.modelsBusy = false;
+  assistantUI.models = [];
+  assistantUI.modelsStatus = '';
+  assistantUI.modelsError = '';
+  assistantUI.modelsOpen = false;
+  assistantUI.modelsQuery = '';
+  assistantUI.tavernCurrent = '';
+  assistantUI.modelSource = '';
+  refreshAssistantModels();
+}
+
+function refreshAssistantStatus() {
+  const root = host?.querySelector('.assistant-workspace');
+  if (!root) return;
+  const updateText = (selector, value, hideEmpty = false) => {
+    const node = host.querySelector(selector);
+    if (!node) return;
+    if (node.textContent !== value) node.textContent = value;
+    if (hideEmpty) node.hidden = !value;
+  };
+  updateText('[data-assistant-key-status]', assistantUI.keyStatus);
+  const textModel = state.assistant.source === 'api' ? state.assistant.model : state.assistant.tavernModel || assistantUI.tavernCurrent;
+  updateText('[data-assistant-model-status]', assistantUI.modelsBusy ? '正在读取模型列表…'
+    : [textModel ? `当前调用模型：${textModel}` : '', assistantUI.modelsStatus].filter(Boolean).join(' · '));
+  updateText('[data-assistant-model-error]', assistantUI.modelsError, true);
+  updateText('[data-assistant-error]', assistantUI.error, true);
+  const status = host.querySelector('[data-assistant-state]');
+  const readiness = setupReadiness().assistant;
+  if (status && status.dataset.readiness !== JSON.stringify(readiness)) {
+    status.outerHTML = readinessBadge(readiness, `data-assistant-state="${assistantUI.busy}" data-readiness="${esc(JSON.stringify(readiness))}"`);
+    paintIcons(host.querySelector('[data-assistant-state]'));
+  }
+  const repairs = host.querySelector('[data-assistant-error-actions]');
+  if (repairs) {
+    const html = assistantUI.error ? renderFailureActions(assistantFailureActions()) : '';
+    if (repairs.innerHTML !== html) { repairs.innerHTML = html; paintIcons(repairs); }
+  }
+  refreshSetupSummary();
+  const primary = host.querySelector('[data-page-primary]');
+  if (primary && primary.dataset.busy !== String(assistantUI.busy)) {
+    primary.dataset.busy = String(assistantUI.busy); primary.innerHTML = primaryPageAction(); paintIcons(primary);
+  }
+  for (const action of ['generate', 'translate', 'polish', 'illustrate', 'use-current', 'apply', 'draw', 'copy', 'save-draft']) {
+    const button = root.querySelector(`[data-action="assistant-${action}"]`);
+    if (!button) continue;
+    button.disabled = action === 'copy' ? !currentAssistantPlan()?.positive
+      : assistantUI.busy || (['generate', 'translate', 'polish', 'illustrate', 'draw'].includes(action) && !state.enabled)
+        || (['apply', 'draw'].includes(action) && !currentAssistantPlan()?.positive);
+  }
+  const cancel = root.querySelector('[data-action="assistant-cancel"]');
+  if (cancel) cancel.hidden = !assistantUI.busy;
+  const refresh = root.querySelector('[data-action="assistant-models"]');
+  if (refresh) {
+    refresh.disabled = assistantUI.modelsBusy;
+    refresh.querySelector('svg')?.classList.toggle('spin', assistantUI.modelsBusy);
+  }
+  const key = root.querySelector('[data-assistant-key]');
+  if (key) key.type = assistantUI.keyVisible ? 'text' : 'password';
+  const reveal = root.querySelector('[data-action="assistant-toggle-key"]');
+  const revealLabel = assistantUI.keyVisible ? '隐藏助手秘钥' : '显示助手秘钥';
+  if (reveal && reveal.getAttribute('aria-label') !== revealLabel) {
+    reveal.setAttribute('aria-label', revealLabel);
+    reveal.title = assistantUI.keyVisible ? '隐藏秘钥' : '显示秘钥';
+    reveal.innerHTML = icon(assistantUI.keyVisible ? 'eye-off' : 'eye');
+    paintIcons(reveal);
+  }
+  const count = host.querySelector('.plugin-nav [data-page="gallery"] small');
+  if (count) count.textContent = String(state.history.length);
+  if (isInstalled()) {
+    const chat = currentChat(), session = host.querySelector('.session-label');
+    if (session && session.dataset.chatName !== chat.name) {
+      session.dataset.chatName = chat.name;
+      session.innerHTML = `${icon('message-square')}${escapeHtml(chat.name)}`;
+      paintIcons(session);
+    }
+    updateText('.plugin-bottom .bottom-actions > span', `当前会话 · ${chat.count} 条消息`);
+  }
+}
+
+function refreshAssistantModels() {
+  refreshAssistantStatus();
+  const picker = host?.querySelector('#assistant-model-picker');
+  if (!picker) return;
+  picker.hidden = !assistantUI.modelsOpen;
+  host.querySelector('[data-action="assistant-toggle-models"]')?.setAttribute('aria-expanded', String(assistantUI.modelsOpen));
+  const search = picker.querySelector('[data-assistant-model-search]');
+  if (search.value !== assistantUI.modelsQuery) search.value = assistantUI.modelsQuery;
+  const choices = assistantModelChoices(state.assistant, assistantUI);
+  const list = picker.querySelector('[data-assistant-model-list]');
+  list.innerHTML = choices.html;
+  picker.querySelector('[data-assistant-model-count]').textContent = `匹配 ${choices.count} 个${choices.count > 100 ? ' · 显示前 100 个' : ''}`;
+  paintIcons(list);
+  const input = host.querySelector('#assistant-model-input');
+  input.placeholder = state.assistant.source === 'api' ? '输入或选择模型'
+    : assistantUI.tavernCurrent ? `跟随当前模型：${assistantUI.tavernCurrent}` : '跟随酒馆当前模型';
+}
+
+function syncAssistantConnection(origin) {
+  const operation = apiSyncWork.then(async () => {
+    const revision = apiEditRevision;
+    const pairs = {
+      openai: { endpoint: state.openaiEndpoint, key: credentials.openai.key,
+        keyRef: state.connections.openai.keyRef, dirty: credentialState.openai.dirty },
+      assistant: { endpoint: state.assistant.endpoint, key: assistantUI.key,
+        keyRef: state.assistant.keyRef, dirty: assistantUI.keyDirty },
+    };
+    const plan = assistantConnectionSync({ ...pairs, link: state.assistant.apiLink, origin });
+    if (!plan) return;
+    const target = plan.target;
+    const ref = target ? await credentialRequest('write', target, {
+      key: plan.key, ref: pairs[target].keyRef,
+    }) : '';
+    if (revision !== apiEditRevision) return;
+    if (target === 'assistant') {
+      state.assistant.endpoint = plan.endpoint;
+      state.assistant.keyRef = ref;
+      assistantUI.key = plan.key.trim();
+      assistantUI.keyStatus = ref ? `${credentialSavedMessage(ref)} · 已同步 OpenAI 接口` : '当前助手秘钥已清空';
+      assistantUI.keyError = false;
+      if (state.assistant.source === 'api') resetAssistantModels();
+    } else if (target === 'openai') {
+      state.openaiEndpoint = plan.endpoint;
+      credentials.openai.key = plan.key.trim();
+      state.connections.openai.keyRef = ref;
+      credentialState.openai.message = ref ? `${credentialSavedMessage(ref)} · 已同步独立 API` : '当前秘钥已清空';
+      credentialState.openai.error = false;
+      if (state.provider === 'openai') resetConnection();
+    }
+    state.assistant.apiLink = { endpoint: plan.endpoint, openaiRef: state.connections.openai.keyRef,
+      assistantRef: state.assistant.keyRef };
+    persist();
+    host?.querySelectorAll('[data-assistant="endpoint"]').forEach((node) => { node.value = state.assistant.endpoint; });
+    host?.querySelectorAll('[data-assistant-key]').forEach((node) => { node.value = assistantUI.key; });
+    host?.querySelectorAll('[data-assistant-key-status]').forEach((node) => { node.textContent = assistantUI.keyStatus; });
+    host?.querySelectorAll('[data-openai-connection="endpoint"]').forEach((node) => { node.value = state.openaiEndpoint; });
+    if (state.provider === 'openai') host?.querySelectorAll('[data-transient="key"]').forEach((node) => { node.value = credentials.openai.key; });
+    updateCredentialStatus();
+  });
+  apiSyncWork = operation.catch(() => {});
+  return operation;
+}
+
+function saveAssistantKey() {
+  clearTimeout(assistantUI.keyTimer);
+  const operation = assistantUI.keyWriting.then(async () => {
+    if (!assistantUI.keyDirty) return;
+    const revision = assistantUI.keyRevision;
+    let ref;
+    try { ref = await credentialRequest('write', 'assistant', { key: assistantUI.key, ref: state.assistant.keyRef }); }
+    catch (error) {
+      const failure = credentialFailure(error);
+      if (revision === assistantUI.keyRevision) {
+        assistantUI.keyStatus = failure.message; assistantUI.keyError = true;
+        refreshAssistantStatus();
+      }
+      throw credentialError(failure.code);
+    }
+    if (revision !== assistantUI.keyRevision) return;
+    state.assistant.keyRef = ref; assistantUI.keyDirty = false;
+    assistantUI.keyStatus = credentialSavedMessage(ref); assistantUI.keyError = false;
+    persist();
+    refreshAssistantStatus();
+  });
+  assistantUI.keyWriting = operation.catch(() => {});
+  return operation.then(() => syncAssistantConnection('assistant'));
+}
+
+async function captureAssistantScheme() {
+  if (assistantUI.busy || profileAI.ui?.busy || imageEditorUI?.busy) throw new Error('文字任务进行中，请稍后保存方案');
+  await saveAssistantKey();
+  // Vault IDs are immutable; later key edits create a new ID and preserve saved schemes.
+  return validateSchemeSettings(state.assistant);
+}
+
+async function loadAssistantScheme(id) {
+  if (assistantUI.busy || profileAI.ui?.busy || imageEditorUI?.busy) throw new Error('文字任务进行中，请稍后载入方案');
+  await saveAssistantKey();
+  await apiSyncWork;
+  const options = resolveAssistantScheme(state.assistantSchemes, id, state.assistant);
+  const builtin = id.startsWith('builtin-'), revision = apiEditRevision, identity = JSON.stringify(state.assistant);
+  let key = assistantUI.key;
+  if (!builtin) {
+    key = options.keyRef ? await credentialRequest('read', 'assistant', { ref: options.keyRef }) : '';
+    if (options.keyRef && !key) throw new Error('方案秘钥无法读取，请先重新填写并更新方案');
+  }
+  if (revision !== apiEditRevision || identity !== JSON.stringify(state.assistant)) throw new Error('接口配置已改变，请重新载入方案');
+  const previous = state.assistant, active = state.assistantSchemeId;
+  state.assistant = options; state.assistantSchemeId = id;
+  try { persist(); } catch (error) { state.assistant = previous; state.assistantSchemeId = active; throw error; }
+  apiEditRevision++; assistantUI.keyRevision++; assistantUI.keyDirty = false; assistantUI.key = key;
+  assistantUI.keyStatus = options.keyRef ? `${credentialSavedMessage(options.keyRef)} · 已载入方案` : '当前方案未保存独立 API 秘钥';
+  assistantUI.keyError = false;
+  assistantUI.keyVisible = false;
+  resetAssistantModels();
+  render(true);
+  if (isInstalled()) {
+    if (assistantPresetPanel.ui.loaded) void assistantPresetPanel.refresh();
+    if (options.source === 'tavern') void fetchAssistantModels(false);
+  }
+}
+
+async function prepareAssistantMessages({ options, operation, input, context, snapshot, signal, trace }) {
+  const params = snapshot.params || snapshot.config.params;
+  return prepareUtilityMessages(buildAssistantMessages({ settings: options, operation, input, context,
+    target: { provider: snapshot.provider, model: params.model } }), operation, options, signal, trace);
+}
+
+async function validateAssistantContext(context, signal) {
+  if (!isInstalled() || !context.contextSelection) return;
+  await assistantHostRequest('context-validate', { contextSelection: context.contextSelection, binding: context.targetBinding },
+    { signal, timeout: 20 });
+}
+
+async function reanalyzeSelectedScene(instruction, locks) {
+  if (!state.enabled) throw new Error('插件已关闭');
+  if (!instruction.trim()) throw new Error('请填写这次希望怎样修改当前画面');
+  pendingSave.flush();
+  const workspace = structuredClone(assistantWorkspace()), revision = assistantScenePanel.revision();
+  const snapshot = captureSnapshot(state), controller = new AbortController();
+  const options = normalizeAssistant(state.assistant), trace = assistantDiagnosticPanel.start('polish', options);
+  assistantUI.busy = true; assistantUI.error = ''; assistantUI.failureTrace = null; assistantUI.controller = controller;
+  render(true);
+  try {
+    await saveAssistantKey();
+    const context = await assistantHostRequest('context', { binding: workspace.binding,
+      contextSelection: assistantContextPanel.selection }, { signal: controller.signal, timeout: options.timeout });
+    context.characterScene = structuredClone(workspace.plan.characterScene || { version: 1, chatKey: '', entries: [] });
+    const params = snapshot.params || snapshot.config.params;
+    const selected = selectedIllustration(workspace.plan, workspace.index);
+    const base = sceneReanalysisMessages(buildAssistantMessages({ settings: options, operation: 'polish',
+      input: instruction, context, target: { provider: snapshot.provider, model: params.model } }), selected, instruction, locks);
+    const messages = await prepareUtilityMessages(base, 'polish', options, controller.signal, trace);
+    assistantContextPanel.show(context, assistantUsage(messages, context, options.maxTokens));
+    await validateAssistantContext(context, controller.signal);
+    const raw = await executeAssistantText(messages, options, controller.signal, trace);
+    controller.signal.throwIfAborted();
+    const result = parseAssistantResult(raw);
+    await validateAssistantContext(context, controller.signal);
+    if (revision !== assistantScenePanel.revision()) throw new Error('草稿或设置已变化，请重新分析此画面');
+    const plan = replaceSelectedScene(workspace.plan, workspace.index, result, locks);
+    trace.finish(null, 1);
+    return { plan, context };
+  } catch (error) { trace.finish(error); assistantUI.failureTrace = trace; throw error; }
+  finally { assistantUI.busy = false; assistantUI.controller = null; render(true); }
+}
+
+async function prepareUtilityMessages(base, operation, options, signal, trace) {
+  trace?.step('preset');
+  const preset = options.presetMode === 'none' ? null
+    : await assistantHostRequest('preset', { settings: options }, { signal, timeout: 20 });
+  const messages = composeAssistantPresetMessages(composeTaskMessages(base, operation, options), preset, options);
+  trace?.request(messages, selectedAssistantPresetEntries(preset, options));
+  updateAssistantBudget(messages, options, operation);
+  return messages;
+}
+
+function updateAssistantBudget(messages, options, operation, units) {
+  if (compatibilityIdentity(options, assistantCompatibilityTarget()) !== compatibilityIdentity(state.assistant, assistantCompatibilityTarget())) {
+    options = resolveAssistantCompatibility(options, assistantCompatibilityTarget());
+  }
+  units ||= operation === 'comic' ? state.comicLibrary.projects.find((row) => row.id === state.comicLibrary.activeId)?.panelCount || 1
+    : options.illustrationCount;
+  assistantUI.budget = { ...assistantBudget(messages, options, { operation, units }), operation };
+  const node = host?.querySelector('[data-assistant-budget]');
+  if (node) node.innerHTML = renderAssistantBudget(assistantUI.budget);
+  return assistantUI.budget;
+}
+async function executeAssistantText(messages, options, signal, trace) {
+  if (options.source === 'tavern') {
+    const info = await assistantHostRequest('models', { refresh: false }, { signal, timeout: 20 }).catch(() => null);
+    if (info) {
+      assistantUI.tavernCurrent = info.current || ''; assistantUI.tavernIdentity = info.signature || info.source || '';
+      if (refreshAssistantCompatibility()) {
+        for (const key of ['responseMode', 'outputParameter', 'omitTemperature', 'contextWindow', 'outputLimit']) options[key] = state.assistant[key];
+        if (options.responseModeOverride) options.responseMode = options.responseModeOverride;
+      }
+    }
+  }
+  if (compatibilityIdentity(options, assistantCompatibilityTarget()) !== compatibilityIdentity(state.assistant, assistantCompatibilityTarget())) {
+    options = resolveAssistantCompatibility(options, assistantCompatibilityTarget());
+  }
+  assistantUI.truncated = false;
+  const operation = trace.record.operation;
+  updateAssistantBudget(messages, options, operation);
+  trace.record.maxTokens = options.maxTokens; trace.record.responseMode = options.responseMode;
+  if (assistantUI.budget.error) throw new Error(assistantUI.budget.error);
+  trace.step('request');
+  const identity = assistantReadyIdentity(options);
+  try {
+    let raw;
+    if (options.source === 'api') raw = await requestAssistantText(options, assistantUI.key, messages, {
+        signal, relay: assistantRelayRequest, onExecution: (value) => trace.execution(value),
+      });
+    else {
+      const result = await assistantHostRequest('text', { messages, diagnostics: true,
+        taskOptions: { maxTokens: options.maxTokens, responseMode: options.responseMode, tavernModel: options.tavernModel } },
+      { signal, timeout: options.timeout });
+      trace.execution(result.execution); raw = result.text;
+    }
+    verifiedAssistant.add(identity); refreshSetupSummary();
+    return raw;
+  } catch (error) {
+    if (error.assistantTruncated) assistantUI.truncated = true;
+    if (typeof error.assistantResponse === 'string') {
+      assistantUI.failureResponse = error.assistantResponse;
+      writeBrowserCache(storageKey('linghuashi-assistant-failure-v1'), error.assistantResponse);
+    }
+    if (error.assistantExecution) trace.execution(error.assistantExecution);
+    throw error;
+  }
+}
+
+function assistantCompatibilityTarget() {
+  return { currentModel: assistantUI.tavernCurrent, tavernIdentity: assistantUI.tavernIdentity };
+}
+function loadAssistantCompatibility() {
+  const profile = compatibilityFor(state.assistant, assistantCompatibilityTarget());
+  for (const key of ['responseMode', 'outputParameter', 'omitTemperature', 'contextWindow', 'outputLimit']) {
+    state.assistant[key] = profile?.[key] ?? ({ responseMode: 'text', outputParameter: 'max_tokens', omitTemperature: false,
+      contextWindow: 0, outputLimit: 0 })[key];
+  }
+  assistantUI.compatibilityIdentity = compatibilityIdentity(state.assistant, assistantCompatibilityTarget());
+  persist();
+}
+function refreshAssistantCompatibility() {
+  const identity = compatibilityIdentity(state.assistant, assistantCompatibilityTarget());
+  if (!identity || identity === assistantUI.compatibilityIdentity) return false;
+  if (assistantUI.compatibilityIdentity || compatibilityFor(state.assistant, assistantCompatibilityTarget())) {
+    loadAssistantCompatibility(); return true;
+  }
+  assistantUI.compatibilityIdentity = identity;
+  return false;
+}
+
+function assistantRelayRequest(action, value, options) {
+  return assistantHostRequest(`relay-${action}`, value, options);
+}
+
+function currentAssistantPlan() {
+  return state.assistantDraft ? selectedIllustration(state.assistantDraft,
+    Math.min(assistantUI.illustrationIndex || 0, illustrationPlans(state.assistantDraft).length - 1)) : null;
+}
+
+function assistantWorkspace() {
+  return { plan: state.assistantDraft, input: state.assistantInput,
+    index: assistantUI.illustrationIndex || 0, binding: assistantUI.binding };
+}
+
+function assistantHistoryBudget() { return ASSISTANT_HISTORY_BYTES; }
+
+function updateAssistantHistory(rows) {
+  const previous = state.assistantHistory; state.assistantHistory = rows;
+  try { persist(); } catch (error) { state.assistantHistory = previous; throw error; }
+}
+
+function replaceAssistantDraft(plan, { operation = 'manual', input = state.assistantInput, index = 0,
+  record = true, binding = null, requestId = null } = {}) {
+  const previous = { assistantDraft: state.assistantDraft, assistantHistory: state.assistantHistory,
+    assistantInput: state.assistantInput, assistantBinding: state.assistantBinding, assistantRequestId: state.assistantRequestId,
+    characterProfiles: state.characterProfiles };
+  const budget = assistantHistoryBudget(plan, input), before = assistantWorkspace();
+  let rows = normalizeAssistantHistory(state.assistantHistory, budget), warning = '';
+  if (before.plan) {
+    try { rows = rememberAssistantDraft(rows, { ...before, operation: 'checkpoint' }, { budget }); }
+    catch (error) { warning = error.message; }
+  }
+  if (record) {
+    try { rows = rememberAssistantDraft(rows, { plan, input, index, operation }, { budget }); }
+    catch (error) { warning = error.message; }
+  }
+  Object.assign(state, { assistantDraft: plan, assistantHistory: rows, assistantInput: input });
+  if (plan?.characterStates?.length) {
+    state.characterProfiles = recordProfileChanges(state.characterProfiles, plan.characterStates,
+      { evidence: plan.scene || plan.reason || '' });
+  }
+  if (binding) { state.assistantBinding = binding; state.assistantRequestId = requestId; }
+  else { delete state.assistantBinding; delete state.assistantRequestId; }
+  try { persist(); } catch (error) { Object.assign(state, previous); throw error; }
+  assistantUI.binding = binding; assistantUI.requestId = requestId;
+  assistantUI.illustrationIndex = index; assistantUI.historyWarning = warning;
+}
+
+async function runPromptAssistant(operation, request) {
+  pendingSave.flush();
+  if (assistantUI.busy) throw new Error('提示词助手正在处理，请稍候');
+  if (!state.enabled) throw new Error('插件已关闭');
+  const input = state.assistantInput.trim();
+  if (operation !== 'illustrate' && !input) throw new Error('请先填写画面描述或提示词');
+  const snapshot = captureSnapshot(state);
+  const profileLibrary = structuredClone(state.characterProfiles);
+  const frozenScene = state.characterSceneOverride ? structuredClone(snapshot.characterScene) : null;
+  const controller = request?.controller || new AbortController();
+  const trace = assistantDiagnosticPanel.start(operation, normalizeAssistant(state.assistant));
+  let recoveryContext;
+  assistantUI.busy = true; assistantUI.error = ''; assistantUI.failureTrace = null; assistantUI.failureResponse = ''; assistantUI.stateWarning = ''; assistantUI.controller = controller;
+  writeBrowserCache(storageKey('linghuashi-assistant-failure-v1'), '');
+  assistantRecoveryPanel.clear();
+  render(true);
+  try {
+    await saveAssistantKey();
+    const options = normalizeAssistant(state.assistant);
+    const settingsIdentity = JSON.stringify(options);
+    if (request?.binding?.slot > 0) options.illustrationCount = 1;
+    trace.step('context');
+    reportChatPreparation(request, 'context');
+    const context = await assistantHostRequest('context', { binding: request?.binding, previous: request?.previous,
+      inputOnly: options.inputOnly && operation !== 'illustrate',
+      contextSelection: request?.automatic ? null : assistantContextPanel.selection },
+      { signal: controller.signal, timeout: options.timeout });
+    if (operation === 'illustrate' && !context.target.trim()) throw new Error('请先打开包含角色回复的聊天');
+    assistantUI.summary = context.summary;
+    trace.context(context.summary);
+    context.characterScene = options.inputOnly && operation !== 'illustrate' ? { version: 1, chatKey: '', entries: [] }
+      : frozenScene || resolveCharacterScene(profileLibrary, context.chatKey, context.characterAvatars);
+    snapshot.characterScene = structuredClone(context.characterScene);
+    reportChatPreparation(request, 'preset');
+    if (['generate', 'illustrate'].includes(operation)) await autoRefreshProfiles(context, options, controller.signal);
+    const messages = await prepareAssistantMessages({ options, operation, input, context, snapshot, signal: controller.signal, trace });
+    assistantContextPanel.show(context, assistantUsage(messages, context, options.maxTokens));
+    await validateAssistantContext(context, controller.signal);
+    reportChatPreparation(request, 'analysis');
+    const raw = await executeAssistantText(messages, options, controller.signal, trace);
+    trace.step('parse');
+    reportChatPreparation(request, 'parse');
+    recoveryContext = { input, scene: structuredClone(context.characterScene),
+      states: options.rememberState ? structuredClone(context.drawingState || []) : [],
+      maxShots: operation === 'illustrate' ? options.illustrationCount : 4 };
+    const plan = parseAssistantResult(raw);
+    await validateAssistantContext(context, controller.signal);
+    trace.step('validate');
+    reportChatPreparation(request, 'validate');
+    if (settingsIdentity !== JSON.stringify(normalizeAssistant(state.assistant))) throw new Error('文字模型配置已改变，请重新分析');
+    if (operation === 'illustrate' && illustrationPlans(plan).length > options.illustrationCount) {
+      throw new Error('模型返回的画面数量超过设置，请减少配图数量后重新分析');
+    }
+    // Profile snapshots always come from the local library, never model output.
+    freezeIllustrationCharacters(plan, context.characterScene, options.rememberState ? context.drawingState : []);
+    if (request && !await validateChatRequest(request)) throw new Error('原消息或自动配图设置已变化，操作已取消');
+    controller.signal.throwIfAborted();
+    if (operation === 'illustrate' && options.rememberState && context.targetBinding) {
+      trace.step('save');
+      const states = evidencedCharacterStates(plan.characterStates, context.target, context.characterScene, context.characters);
+      if (states.length) {
+        try {
+          await assistantHostRequest('state-save', { binding: context.targetBinding, states,
+            scene: context.characterScene, characters: context.characters }, { signal: controller.signal, timeout: 20 });
+        } catch (error) {
+          controller.signal.throwIfAborted();
+          assistantUI.stateWarning = error.message;
+        }
+      }
+    }
+    controller.signal.throwIfAborted();
+    trace.step('save');
+    reportChatPreparation(request, 'draft');
+    replaceAssistantDraft(plan, { operation, input: operation === 'illustrate' ? plan.scene : input,
+      binding: request?.binding || null, requestId: request?.requestId || null });
+    assistantUI.lintTarget = operation === 'illustrate' ? context.target : null;
+    trace.finish(null, illustrationPlans(plan).length);
+    return { plan, options, snapshot };
+  } catch (error) {
+    trace.finish(controller.signal.aborted ? new Error('操作已取消') : error);
+    assistantUI.failureTrace = trace;
+    if (!controller.signal.aborted && typeof error.assistantResponse === 'string') {
+      assistantUI.failureResponse = error.assistantResponse;
+      assistantRecoveryPanel.setFailure(error.assistantResponse, recoveryContext || {});
+    }
+    assistantUI.error = controller.signal.aborted ? '操作已取消'
+      : error.name === 'TimeoutError' ? '文字接口处理超时，请手动重试'
+        : error instanceof TypeError ? '文字接口连接失败，请检查地址和跨域设置' : error.message;
+    throw new Error(assistantUI.error);
+  } finally { assistantUI.busy = false; assistantUI.controller = null; render(true); }
+}
+
+async function analyzeChat(request) {
+  try {
+    if (!await validateChatRequest(request)) throw new Error('原消息已变化');
+    const result = await runPromptAssistant('illustrate', request);
+    request.assistantPlan = result.plan; request.assistantOptions = result.options;
+    request.assistantSnapshot = result.snapshot;
+    const generating = result.plan.shouldDraw && !request.openEditor && normalizeAssistant(state.assistant).autoImage;
+    if (request.openEditor) {
+      if (document.querySelector('#overlay-root .drawing-viewer')) closeDrawingViewer();
+      assistantUI.binding = request.binding; assistantUI.requestId = request.requestId;
+      state.assistantBinding = request.binding; state.assistantRequestId = request.requestId;
+      state.assistantInput = result.plan.scene; persist(); showPage('assistant');
+      chatPost('linghuashi:attention', { page: 'assistant' });
+    }
+    chatPost('linghuashi:chat-draft', { requestId: request.requestId, binding: request.binding, plan: result.plan, generating, analysis: true });
+    if (generating) await enqueueGeneration(request);
+  } catch (error) {
+    chatPost('linghuashi:chat-task', { requestId: request.requestId, binding: request.binding,
+      status: request.controller.signal.aborted ? 'cancelled' : 'failed', error: error.message });
+  }
+}
+
+async function fetchAssistantModels(refresh = true) {
+  if (assistantUI.modelsBusy) return;
+  const source = state.assistant.source;
+  const controller = new AbortController();
+  assistantUI.modelsController = controller;
+  assistantUI.modelsBusy = true; assistantUI.modelsError = '';
+  refreshAssistantStatus();
+  try {
+    let models, message = '', current = '';
+    if (source === 'tavern') {
+      const data = await assistantHostRequest('models', { refresh }, { signal: controller.signal, timeout: 20 });
+      models = assistantModelNames(data.models);
+      current = data.current;
+      message = data.message;
+      assistantUI.tavernIdentity = data.signature || data.source || '';
+    } else {
+      await saveAssistantKey();
+      controller.signal.throwIfAborted();
+      const revision = apiEditRevision;
+      models = await requestAssistantModels(state.assistant, assistantUI.key, { signal: controller.signal, relay: assistantRelayRequest });
+      if (revision !== apiEditRevision) return;
+    }
+    if (controller.signal.aborted || assistantUI.modelsController !== controller || source !== state.assistant.source) return;
+    assistantUI.models = models;
+    assistantUI.tavernCurrent = current;
+    assistantUI.modelSource = source;
+    refreshAssistantCompatibility();
+    assistantUI.modelsStatus = [models.length ? `已读取 ${models.length} 个模型` : '', message].filter(Boolean).join(' · ');
+    if (refresh) assistantUI.modelsOpen = true;
+    if (refresh && models.length) toast(`已读取 ${models.length} 个模型`);
+  } catch (error) {
+    if (!controller.signal.aborted && assistantUI.modelsController === controller) assistantUI.modelsError = error.message;
+  }
+  finally {
+    if (assistantUI.modelsController === controller) {
+      assistantUI.modelsController = null;
+      assistantUI.modelsBusy = false;
+      refreshAssistantModels();
+    }
+  }
+}
+
+function applyAssistantToParameters() {
+  const plan = currentAssistantPlan();
+  if (!plan?.positive) throw new Error('请先准备提示词');
+  const snapshot = captureSnapshot(state);
+  const params = snapshot.params || snapshot.config.params;
+  params.positive = ''; params.negative = '';
+  if (snapshot.characterScene) delete snapshot.characterScene.applied;
+  restoreSnapshot(state, applyAssistantPlan(snapshot, plan, state.assistant));
+  const applied = state.provider === 'comfyui' ? state.comfyui.params : state[state.provider];
+  creationPromptOrigin = { provider: state.provider, label: '与已应用的助手草稿相同',
+    params: { positive: applied.positive, negative: applied.negative } };
+  persist(); toast('助手提示词已载入当前生图参数');
+}
+
+function updateCredentialStatus() {
+  const status = credentialState[state.provider];
+  host?.querySelectorAll('[data-credential-status]').forEach((node) => {
+    node.textContent = status.message;
+    node.dataset.error = String(status.error);
+  });
+  if (host) {
+    updateNovelAIDirty();
+    updateOpenAIDirty();
+    updateComfyDirty();
+    updateSDWebUIDirty();
+  }
+  refreshSetupSummary();
+  if (state.page === 'connection' && runtimeState === 'ready') {
+    const badge = host?.querySelector('.page-heading > .ui-status');
+    if (badge) {
+      badge.outerHTML = readinessBadge(setupReadiness().image);
+      paintIcons(host.querySelector('.page-heading'));
+    }
+  }
+}
+
+function saveConnection(provider) {
+  const current = credentialState[provider];
+  clearTimeout(current.timer);
+  const operation = current.writing.then(async () => {
+    syncConnection(provider);
+    if (!current.dirty) { persist(); return; }
+    const key = credentials[provider].key;
+    const revision = current.revision;
+    current.message = '正在保存秘钥…';
+    current.error = false;
+    updateCredentialStatus();
+    let ref;
+    try { ref = await credentialRequest('write', provider, { key, ref: state.connections[provider].keyRef }); }
+    catch (error) {
+      const failure = credentialFailure(error);
+      if (current.revision === revision) {
+        current.message = failure.message; current.error = true;
+        updateCredentialStatus();
+      }
+      throw credentialError(failure.code);
+    }
+    if (current.revision !== revision) return;
+    state.connections[provider].keyRef = ref;
+    current.dirty = false;
+    current.message = credentialSavedMessage(ref);
+    persist();
+    updateCredentialStatus();
+  });
+  current.writing = operation.catch(() => {});
+  return operation.then(() => provider === 'openai' ? syncAssistantConnection('openai') : undefined);
+}
+
+function scheduleConnectionSave(provider, immediate = false) {
+  const current = credentialState[provider];
+  clearTimeout(current.timer);
+  current.timer = setTimeout(() => {
+    void saveConnection(provider).catch(() => {});
+  }, immediate ? 0 : 400);
+}
+
+async function presetOperation(operation) {
+  if (presetBusy) throw new Error('正在处理预设，请稍候');
+  presetBusy = true;
+  host.inert = true;
+  try { return await operation(); }
+  finally { presetBusy = false; host.inert = false; }
+}
+
+async function saveCurrentPreset(provider, name) {
+  return presetOperation(async () => {
+    await saveConnection(provider);
+    const save = { novelai: saveNovelAIPreset, openai: saveOpenAIPreset, comfyui: saveComfyPreset, sdwebui: saveSDWebUIPreset }[provider];
+    const preset = save(state, name);
+    persist();
+    updateCredentialStatus();
+    return preset;
+  });
+}
+
+async function loadCurrentPreset(provider, id) {
+  return presetOperation(async () => {
+    await saveConnection(provider);
+    const list = state[{ novelai: 'novelaiPresets', openai: 'openaiPresets', comfyui: 'comfyPresets', sdwebui: 'sdwebuiPresets' }[provider]];
+    const preset = list.find((item) => item.id === id);
+    const connection = resolvePresetConnection(state, provider, preset);
+    const key = connection
+      ? await credentialRequest('read', provider, { ref: connection.keyRef }) : credentials[provider].key;
+    const load = { novelai: loadNovelAIPreset, openai: loadOpenAIPreset, comfyui: loadComfyPreset, sdwebui: loadSDWebUIPreset }[provider];
+    load(state, id);
+    if (connection) {
+      Object.assign(credentials[provider], {
+        key, endpoint: state.connections[provider].endpoint, auth: state.connections[provider].auth || 'none',
+      });
+      credentialState[provider].message = key ? credentialSavedMessage(connection.keyRef) : '';
+      credentialState[provider].error = false;
+    }
+    keyVisible = false;
+    if (provider === 'openai') {
+      apiEditRevision++;
+      await syncAssistantConnection('openai');
+    }
+    resetConnection();
+    persist(); render(); checkConnection();
+    toast(connection ? '关联接口、秘钥与参数已载入' : '参数已载入，当前接口与秘钥已保留');
+  });
+}
+
+function renderPresets(actions = '') {
+  return ({ novelai: renderNovelAIPresets, openai: renderOpenAIPresets, comfyui: renderComfyPresets, sdwebui: renderSDWebUIPresets })[state.provider](state, actions)
+    + renderPresetBinding(state);
+}
+
+function renderKeyInput(placeholder, extra = '') {
+  return `<div class="input-with-button credential-input"><input type="${keyVisible ? 'text' : 'password'}" data-transient="key" autocomplete="off" spellcheck="false" maxlength="4096" ${extra} placeholder="${placeholder}" value="${esc(credentials[state.provider].key)}" /><button type="button" class="ui-icon-button" data-action="toggle-key" title="${keyVisible ? '隐藏秘钥' : '显示秘钥'}" aria-label="${keyVisible ? '隐藏秘钥' : '显示秘钥'}" aria-pressed="${keyVisible}">${icon(keyVisible ? 'eye-off' : 'eye')}</button></div>`;
+}
+
+function updateTriggerFormat() {
+  const example = host.querySelector('[data-trigger-format-example]');
+  if (example) example.textContent = `${state.triggerPrefix}图片提示词${state.triggerSuffix}`;
+}
+
+function resultMedia(chat = false) {
+  const job = taskQueue.jobs.find((item) => item.id === activeJobId);
+  if (generationSubmitting && !['queued', 'generating'].includes(runtimeState)) {
+    return renderGenerationTransition({ theme: state.characterTheme, task: { status: 'preparing' } });
+  }
+  if (runtimeState === 'error') return `<div class="result-placeholder result-error">${chibi('sad', 'status-mascot')}<strong>${job?.saved ? '图片已保存，图库刷新失败' : job && canRecoverGeneration(job) ? '图片任务需要继续处理' : '生成未完成'}</strong><span>${esc(job?.error || '服务暂时没有响应')}</span>${renderFailureActions(failureActions({ ...job,
+    message: job?.error, phase: job?.failurePhase || job?.phase }), job?.id)}</div>`;
+  if (runtimeState === 'queued' || runtimeState === 'generating') {
+    const previous = activeDrawing();
+    const task = job || { status: runtimeState === 'queued' ? 'queued' : 'running', phase: 'submitting' };
+    const actions = iconButton('x', '取消任务', 'cancel', task.phase === 'saving' ? 'disabled' : '');
+    return `${previous ? `<button type="button" class="image-open" data-action="viewer" data-image="${previous.id}" aria-label="查看原图"><img src="${previous.src}" alt="${esc(previous.title)}" /></button>` : ''}${renderGenerationTransition({ theme: state.characterTheme, task, compact: Boolean(previous), remote: job?.remote === true, actions })}`;
+  }
+  if (isInstalled() && !activeDrawing()) return `<div class="result-placeholder">${chibi('thinking', 'status-mascot')}<strong>等待第一张绘图</strong>${button('plug', '接口配置', 'connection', 'secondary', 'data-page="connection"')}</div>`;
+  const image = activeDrawing() || activeSample;
+  return `<button type="button" class="image-open" data-action="viewer" ${image === activeSample ? '' : `data-image="${image.id}"`} aria-label="查看${esc(image.title)}大图"><img src="${image.src}" alt="${esc(image.title)}" /><span class="image-expand">${icon('expand')}</span></button>${!chat ? `<div class="image-caption"><span>${esc(image.title)}</span><span>${image.size}</span></div>` : ''}`;
+}
+
+function renderGenerate() {
+  const novelai = state.provider === 'novelai';
+  const openai = state.provider === 'openai';
+  const session = isInstalled() ? `${esc(currentChat().name)} <span> / </span> ${currentChat().count} 条消息` : '林间的旅人 <span> / </span> 当前会话';
+  return `<div class="page-heading"><div><h1>生图工坊</h1><p>${session}</p></div><div class="heading-actions">${iconButton('plug', '接口配置', 'connection', 'data-page="connection"')}</div></div>
+    ${generationIssue ? `<section class="generation-issue" role="alert"><p>${esc(generationIssue)}</p>${renderFailureActions(failureActions({ message: generationIssue }))}</section>` : ''}
+    <div class="generation-workspace">
+      <section class="prompt-area">
+        ${renderPresets(`<button type="button" class="ui-button secondary" data-page="batch">${icon('grid-2x2')}组合生图</button>`)}
+        ${field('生图接口', `<select data-setting="provider">${GENERATION_MODES.map((mode) => `<option value="${mode.id}" ${state.provider === mode.id ? 'selected' : ''}>${mode.title}</option>`).join('')}</select>`)}
+        ${renderNamedConnections(state)}
+        ${renderArtistQuickPick(state)}
+        ${experienceFold(state, 'generation-modes', '图生图、局部重绘与参考图', advancedPanel.html(), advancedOf(captureSnapshot(state)).mode !== 'text')}
+        ${novelai ? renderNovelAIParameters(state, novelaiAdvancedOpen) : openai ? renderOpenAIParameters(state, openaiModels, openaiAdvancedOpen, { ...openaiModelUI, loading: connectionStatus.tone === 'pending' }) : state.provider === 'sdwebui' ? renderSDWebUIParameters(state, sdwebuiProbe, sdwebuiAdvancedOpen) : renderComfyWorkflow(state, comfyProbe, comfyExpanded)}
+        ${renderCharacterSelection(state, currentChat(), { frozen: Boolean(state.characterSceneOverride), outfitDrafts: profileUI.outfitDrafts })}
+        <div class="assistant-actions">${button('scan-eye', '预览本次生图', 'creation-preview', 'secondary')}${button('sparkles', '用当前提示词构思', 'creation-assistant', 'secondary')}<button type="button" class="ui-button secondary" data-page="processing">${icon('replace')}字段与触发词</button></div>
+        ${renderCreationPreview(creationPreviewState?.preview, creationPreviewState && creationPreviewState.revision !== currentCreationRevision())}
+      </section>
+      ${renderGenerationResult()}
+    </div>${renderTasks()}`;
+}
+
+let creationPreviewState = null;
+let creationPromptOrigin = null;
+function creationSources() {
+  const preset = { novelai: selectedNovelAIPreset, openai: selectedOpenAIPreset,
+    comfyui: selectedComfyPreset, sdwebui: selectedSDWebUIPreset }[state.provider](state);
+  return { preset: { name: preset.name || '默认配置', params: preset.params || preset.config?.params || {} },
+    origin: creationPromptOrigin?.provider === state.provider ? creationPromptOrigin : null };
+}
+function currentCreationRevision() {
+  return creationRevision([captureSnapshot(state), creationSources(), profileUI.outfitDrafts,
+    effectiveProfiles(state.characterProfiles, currentChat().key), state.promptProcessing, state.tagLibrary]);
+}
+function refreshCreationPreviewState() {
+  const node = host?.querySelector('[data-creation-preview-state]');
+  if (node && creationPreviewState) node.textContent = creationPreviewState.revision === currentCreationRevision()
+    ? '本地预览 · 尚未提交生图' : '参数已改变，请重新预览';
+}
+
+function renderGenerationResult() {
+  return `<section class="result-area">
+        <div class="field-heading"><h2>生成结果</h2>${statusBadge()}</div>
+        <div class="result-frame${generationSubmitting || runtimeState === 'queued' || runtimeState === 'generating' ? ' result-frame--pending' : ''}">${resultMedia()}</div>
+        <div class="result-actions"><span>${activeDrawing()?.demo ? '示例图片' : activeDrawing() ? '当前图片' : ''}</span><div>${iconButton('star', '收藏图片', 'favorite', `aria-pressed="${activeDrawing()?.favorite || false}"`)}${iconButton('arrow-down-to-line', '下载图片', 'download')}${iconButton('expand', '查看大图', 'viewer')}</div></div>
+        ${renderResultDetails()}
+        <div class="recent-heading"><h2>最近图片</h2><button type="button" class="text-button" data-page="gallery">绘图管理${icon('arrow-right')}</button></div>
+        <div class="recent-images">${drawings.slice(0, 3).map((item) => `<button type="button" data-drawing="${item.id}" class="${activeDrawingId === item.id ? 'selected' : ''}" aria-label="查看${esc(item.title)}"><img src="${item.thumbSrc}" alt="${esc(item.title)}" /></button>`).join('')}</div>
+      </section>`;
+}
+
+function refreshGenerationStatus() {
+  if (state.page !== 'generate' || config.surface !== 'console') return;
+  replaceStatusHTML('.result-area', renderGenerationResult(), true);
+  replaceStatusHTML('.generation-tasks', renderTasks(), true);
+  const primary = host.querySelector('[data-page-primary]');
+  if (primary) replaceStatusHTML('[data-page-primary]', primaryPageAction());
+  const count = host.querySelector('.plugin-nav > [data-page="gallery"] small');
+  if (count && count.textContent !== String(state.history.length)) count.textContent = String(state.history.length);
+}
+
+const statusMarkup = new WeakMap();
+function replaceStatusHTML(selector, html, outer = false) {
+  const node = host?.querySelector(selector);
+  if (!node || statusMarkup.get(node) === html) return;
+  if (outer) node.outerHTML = html;
+  else node.innerHTML = html;
+  const updated = host.querySelector(selector);
+  if (updated) { statusMarkup.set(updated, html); paintIcons(updated); }
+}
+
+function refreshBackgroundStatus() {
+  if (!host || !config || rendering) return;
+  // Polling and result synchronization never rebuild a settings form or reading view.
+  refreshGenerationStatus();
+  if (state.page === 'assistant') refreshAssistantStatus();
+  if (state.page === 'comic') comicPanel.refreshStatus();
+  if (state.page === 'batch') workbenchPanel.refreshStatus(host);
+  if (state.page === 'connection') { updateConnectionStatus(); updateCredentialStatus(); }
+  const count = host.querySelector('.plugin-nav [data-page="gallery"] small');
+  if (count && count.textContent !== String(state.history.length)) count.textContent = String(state.history.length);
+  refreshSaveStatus();
+  refreshFirstSuccess();
+}
+
+function taskPhase(phase) {
+  return ({ waiting: '等待调度', preparing: '正在读取参考素材', submitting: '正在提交请求', generating: '服务正在生成', retrieving: '正在读取生成结果',
+    downloading: '正在下载图片', saving: '正在存入绘图管理', done: '已保存' })[phase] || '服务正在生成';
+}
+
+function renderTasks() {
+  const labels = { queued: '等待中', running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消', paused: '等待继续', uncertain: '结果待核对' };
+  return `<section class="generation-tasks" aria-label="生图任务">
+    <div class="field-heading"><h2>任务与请求记录</h2><div class="task-actions">${iconButton('refresh-cw', '刷新任务记录', 'task-refresh')}${iconButton('trash-2', '清理已结束记录，保留已保存图片', 'task-clear')}${iconButton('download', '导出请求记录', 'task-export')}</div></div>
+    <p class="task-empty">已结束记录自动整理，已保存图片保留。未完成的图片可在下方继续保存或核对。</p>
+    ${taskError ? `<p class="task-empty" role="status">${esc(taskError)}</p>` : ''}
+    ${taskQueue.jobs.length ? `<div class="task-list">${[...taskQueue.jobs].reverse().map((job) => `<div class="task-row">
+      <div><strong>${job.plan.snapshot?.novelaiProcessing ? `${esc(processingTitle(job.plan.snapshot.novelaiProcessing))} · ` : ''}${esc(job.plan.model)}</strong><span>${labels[job.status]}${job.remote ? ' · 其他页面执行中' : ''} · ${esc(job.error || taskPhase(job.phase))}${job.imageCount ? ` · ${job.imageCount} 张` : ''}</span><span>${job.plan.snapshot?.extensionRequest ? `来自 ${esc(job.plan.snapshot.extensionRequest.source.name)} · ` : ''}${job.plan.storageLocation === 'server' ? '酒馆服务器' : '浏览器图片库'} · ${new Date(job.createdAt).toLocaleString()}</span></div>
+      ${job.finishedAt && job.startedAt ? `<span class="task-duration">${((job.finishedAt - job.startedAt) / 1000).toFixed(1)} 秒</span>` : ''}
+      <div class="task-actions">${canRecoverGeneration(job) ? iconButton(job.execution ? 'download' : 'play', job.execution ? '继续取图或保存' : '继续提交此任务', 'task-retry', `data-task="${job.id}"`) : ''}
+      ${iconButton('sliders-horizontal', '载入此任务的参数', 'task-parameters', `data-task="${job.id}"`)}
+      ${['queued', 'running', 'paused', 'failed', 'uncertain'].includes(job.status) ? iconButton('x', job.status === 'uncertain' ? '关闭记录' : '取消此任务', 'task-cancel', `data-task="${job.id}" ${job.phase === 'saving' && job.status === 'running' ? 'disabled' : ''}`) : ''}</div>
+    </div>`).join('')}</div>` : '<p class="task-empty">暂无请求</p>'}</section>`;
+}
+
+function renderResultDetails() {
+  const currentJob = taskQueue.jobs.find((job) => job.id === activeJobId);
+  const item = ['queued', 'generating', 'error'].includes(runtimeState) ? null : activeDrawing();
+  const snapshot = item?.snapshot || currentJob?.plan.snapshot || captureSnapshot(state);
+  const params = snapshot.params || snapshot.config.params;
+  const rows = snapshot.provider === 'openai' ? [
+    ['模型', params.model], ['尺寸', item?.size || openAISize(params).replace('x', ' × ').replace('auto', '自动')],
+    ['质量 / 请求张数', `${params.quality} · ${params.n} 张`],
+  ] : snapshot.provider === 'novelai' ? [
+    ['模型', NOVELAI_MODELS.find((model) => model.id === params.model)?.title || params.model],
+    ['尺寸', item?.size || `${params.width} × ${params.height}`],
+    ['采样', `${params.steps} steps · CFG ${params.scale}`],
+  ] : [
+    ['模型', params.model || params.checkpoint || snapshot.config?.name || '跟随服务当前模型'],
+    ['尺寸', item?.size || `${params.width} × ${params.height}`],
+    ['采样', `${params.steps} steps · CFG ${params.cfg}`],
+  ];
+  return `<div class="result-details">${rows.map(([label, value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div>`;
+}
+
+function renderConnection() {
+  const novelai = state.provider === 'novelai';
+  const openai = state.provider === 'openai';
+  const current = credentials[state.provider];
+  return `<div class="page-heading"><div><h1>接口配置</h1><p>生图服务与模型配置</p></div>${statusBadge()}</div>
+    <section class="settings-content">
+      <details class="config-glossary"><summary>接口、参数预设和助手方案分别保存什么？</summary><dl>
+        <dt>接口配置</dt><dd>服务地址与认证信息，可命名保存多个接口。</dd>
+        <dt>参数预设</dt><dd>生图模型、尺寸、提示词等出图参数，可选择关联接口。</dd>
+        <dt>助手方案</dt><dd>文字接口、任务规则、上下文与配图习惯。</dd>
+        <dt>酒馆预设</dt><dd>酒馆聊天使用的提示词条目，按选定来源加入文字请求。</dd>
+      </dl></details>
+      ${renderPresets()}
+      <div class="provider-options">${GENERATION_MODES.map((mode) => `<button type="button" data-provider="${mode.id}" class="${state.provider === mode.id ? 'selected' : ''}" aria-pressed="${state.provider === mode.id}">${icon(mode.icon)}<span><strong>${mode.title}</strong><small>${mode.subtitle}</small></span>${icon('check')}</button>`).join('')}</div>
+      ${renderNamedConnections(state, true)}
+      ${novelai ? `<p class="provider-website">官方网站：<a href="https://novelai.net/" target="_blank" rel="noopener noreferrer">https://novelai.net/${icon('external-link')}</a></p>` : openai ? renderOpenAIConnection() : state.provider === 'sdwebui' ? renderSDWebUIConnection({ ...state.connections.sdwebui, ...current }, renderKeyInput(current.auth === 'basic' ? 'SDWebUI 密码' : '访问令牌')) : `${field('ComfyUI 服务地址', `<input type="url" data-transient="endpoint" placeholder="https://你的域名/comfyui" value="${esc(current.endpoint)}" />`)}<p class="comfy-note">填写 ComfyUI 服务的根地址；127.0.0.1 指当前浏览器所在电脑。远程服务需允许当前页面跨域访问，HTTPS 页面建议使用 HTTPS 服务地址。</p>${renderComfyConnectionOptions(state, current, comfyExpanded.auth, keyVisible)}`}
+      ${novelai ? field('API Key', renderKeyInput('pst- / sk- / STD- 秘钥', 'aria-describedby="novelai-key-help"')) : ''}
+      ${state.provider === 'sdwebui' ? '' : '<p class="credential-status" data-credential-status role="status" aria-live="polite"></p>'}
+      ${novelai ? `<div class="connection-help" id="novelai-key-help"><p>支持自动识别官方秘钥(pst-xxxx)和部分第三方秘钥(常用为sk-xxxx)</p><p>支持蛋糕生图、砂糖绘画；砂糖同时支持 STD 开头的秘钥。</p></div>
+      <details class="advanced-options endpoint-options" ${addressExpanded ? 'open' : ''}><summary>${icon('link')}第三方接口地址(可选)${icon('chevron-down')}</summary><div>${field('第三方接口地址(可选)', `<input type="url" autocomplete="off" data-transient="endpoint" placeholder="https://第三方域名" value="${esc(current.endpoint)}" />`)}<p class="endpoint-help">留空自动识别；填写后优先用于第三方秘钥。pst- 秘钥始终使用官方接口。</p></div></details>` : ''}
+      <div class="connection-actions" ${openai ? 'data-openai-connection-actions' : ''}><span id="connection-status" data-connection-status role="status" aria-live="polite"></span><div class="connection-buttons">${button('scan', '打开调试工具', 'network-diagnostics', 'secondary', 'hidden')}${button('plug', '测试连接', 'test-connection', 'secondary')}</div></div>
+      <p class="resolved-endpoint" data-resolved-endpoint></p>
+      ${experienceFold(state, 'connection-modes', '图生图、局部重绘与参考图', advancedPanel.html(), advancedOf(captureSnapshot(state)).mode !== 'text')}
+      ${novelai ? `<div class="section-rule"></div>${renderNovelAIParameters(state, novelaiAdvancedOpen)}` : ''}
+      ${openai ? `<div class="section-rule"></div>${renderOpenAIParameters(state, openaiModels, openaiAdvancedOpen, { ...openaiModelUI, loading: connectionStatus.tone === 'pending' })}` : state.provider === 'sdwebui' ? `<div class="section-rule"></div>${renderSDWebUIParameters(state, sdwebuiProbe, sdwebuiAdvancedOpen)}` : !novelai ? `${renderComfyService(comfyProbe)}<div class="section-rule"></div>${renderComfyWorkflow(state, comfyProbe, comfyExpanded)}` : ''}
+    </section>`;
+}
+
+function renderOpenAIConnection() {
+  return `${field('接口地址', `<input type="url" data-openai-connection="endpoint" autocomplete="off" spellcheck="false" maxlength="512" placeholder="https://api.openai.com/v1" value="${esc(state.openaiEndpoint)}" />`)}
+    ${field('API Key', renderKeyInput('sk-...'))}
+    <details class="advanced-options openai-transport" data-experience-fold="openai-transport" ${openaiTransportOpen || state.experience.level === 'full' ? 'open' : ''}><summary>${icon('sliders-horizontal')}连接选项${icon('chevron-down')}</summary>
+      <div class="two-field-row">${field('生图路径', `<input data-openai-connection="path" value="${esc(state.openaiPath)}" maxlength="200" spellcheck="false" />`)}${field('请求超时 (秒)', `<input type="number" data-openai-connection="timeout" min="5" max="600" step="1" value="${state.openaiTimeout}" />`)}</div>
+      ${button('file-json', '查看生图请求', 'openai-request-preview', 'secondary')}
+    </details>`;
+}
+
+function updateOpenAIDirty() {
+  host.querySelectorAll('[data-openai-dirty]').forEach((node) => {
+    const dirty = openAIPresetDirty(state);
+    node.textContent = dirty ? '有未保存修改' : '已保存';
+    node.dataset.dirty = String(dirty);
+  });
+  let error = '';
+  try { buildOpenAIRequest(state.openai); } catch (issue) { error = issue.message; }
+  host.querySelectorAll('[data-openai-validation]').forEach((node) => {
+    node.textContent = error; node.hidden = !error;
+  });
+  if (state.provider === 'openai') {
+    host.querySelectorAll('[data-action="generate"]').forEach((node) => {
+      node.disabled = Boolean(error) || !state.enabled;
+    });
+  }
+}
+
+function syncOpenAIModelSelection() {
+  host.querySelectorAll('.openai-model-item').forEach((item) => {
+    const name = item.querySelector('[data-action="openai-select-model"]');
+    const selected = name.dataset.openaiModelId === state.openai.model;
+    item.classList.toggle('selected', selected);
+    name.setAttribute('aria-pressed', String(selected));
+  });
+}
+
+function updateOpenAIModelList() {
+  const panel = host?.querySelector('.openai-model-panel');
+  if (!panel) return;
+  const available = openaiModelUI.fetched ? openaiModels : OPENAI_MODELS;
+  const filtered = filterOpenAIModels(available, openaiModelUI.query);
+  panel.hidden = !openaiModelUI.open;
+  panel.querySelector('[data-openai-model-title]').textContent = openaiModelUI.fetched ? '可用模型' : '常用模型';
+  panel.querySelector('[data-openai-model-count]').textContent = `${openaiModelUI.query.trim() ? `${filtered.length} / ${available.length}` : available.length} 个`;
+  panel.querySelector('[data-openai-model-grid]').innerHTML = renderOpenAIModelItems(available, state.openai.model, openaiModelUI.query, openaiModelUI.fetched);
+  panel.querySelector('[data-openai-model-search]').value = openaiModelUI.query;
+  const toggle = host.querySelector('[data-action="openai-toggle-models"]');
+  toggle.setAttribute('aria-expanded', String(openaiModelUI.open));
+  toggle.title = toggle.ariaLabel = openaiModelUI.open ? '收起模型列表' : '展开模型列表';
+  updateOpenAIModelStatus();
+  paintIcons();
+}
+
+function updateOpenAIModelStatus() {
+  const summary = host.querySelector('[data-openai-model-summary]');
+  if (!summary) return;
+  const pending = state.provider === 'openai' && connectionStatus.tone === 'pending';
+  summary.textContent = pending ? '获取中…' : openaiModelUI.fetched ? `已获取 ${openaiModels.length} 个` : '尚未获取';
+  host.querySelector('[data-action="openai-fetch-models"]').disabled = pending;
+  host.querySelector('.openai-model-panel').setAttribute('aria-busy', String(pending));
+  const feedback = host.querySelector('[data-openai-model-feedback]');
+  feedback.hidden = connectionStatus.tone !== 'error';
+  feedback.textContent = connectionStatus.tone === 'error' ? connectionStatus.message : '';
+}
+
+async function copyOpenAIModel(model, selecting = false) {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(model);
+    toast(selecting ? '模型已选中并复制' : '模型名已复制');
+  } catch {
+    toast(selecting ? '模型已选中，浏览器未允许复制' : '复制失败，请手动复制模型名');
+  }
+}
+
+function commitOpenAIFields() {
+  state.openai = normalizeOpenAI(state.openai);
+  persist();
+  const quality = host.querySelector('[data-openai="quality"]');
+  if (quality) quality.innerHTML = openAIQualityOptions(state.openai).map(([id, title]) => `<option value="${id}">${title}</option>`).join('');
+  const gpt = usesGPTImage(state.openai), nai = isOpenAINovelAI(state.openai.model);
+  host.querySelectorAll('[data-openai-negative-field]').forEach((field) => { field.hidden = !nai; });
+  host.querySelectorAll('[data-openai]').forEach((input) => {
+    const key = input.dataset.openai;
+    if (input.type === 'checkbox') input.checked = state.openai[key];
+    else input.value = state.openai[key];
+    if (['outputFormat', 'background', 'moderation'].includes(key)) input.disabled = !gpt;
+    if (key === 'compression') input.disabled = !gpt || state.openai.outputFormat === 'png';
+    if (key === 'responseFormat') input.disabled = gpt;
+    if (key === 'negative') input.disabled = !nai;
+  });
+  const details = host.querySelector('.result-details');
+  if (state.provider === 'openai' && details) details.outerHTML = renderResultDetails();
+  updateOpenAIDirty();
+  syncOpenAIModelSelection();
+}
+
+function openOpenAIPresetDialog(deleting = false) {
+  commitOpenAIFields();
+  const selected = selectedOpenAIPreset(state);
+  if (deleting && selected.id === 'default') return;
+  const overlay = document.getElementById('overlay-root');
+  overlay.innerHTML = `<dialog class="nai-preset-dialog" aria-labelledby="openai-dialog-title"><form>
+    <header><h2 id="openai-dialog-title">${deleting ? '删除预设' : '另存为预设'}</h2>${iconButton('x', '关闭', 'close-openai-dialog')}</header>
+    ${deleting ? `<p>删除预设“${esc(selected.name)}”？当前参数会保留。</p>` : field('预设名称', `<input name="name" maxlength="40" required autocomplete="off" placeholder="输入预设名称" value="${selected.id === 'default' ? '' : esc(`${selected.name} 副本`.slice(0, 40))}" />`)}
+    <p class="nai-dialog-error" role="alert"></p>
+    <footer>${button('x', '取消', 'close-openai-dialog', 'secondary')}<button type="submit" class="ui-button primary">${icon(deleting ? 'trash-2' : 'save')}<span>${deleting ? '删除预设' : '保存新预设'}</span></button></footer>
+  </form></dialog>`;
+  const dialog = overlay.querySelector('dialog');
+  dialog.querySelectorAll('[data-action="close-openai-dialog"]').forEach((node) => node.addEventListener('click', () => dialog.close()));
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  dialog.querySelector('form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (presetBusy) return;
+    const name = new FormData(event.target).get('name');
+    const previous = JSON.stringify({ presets: state.openaiPresets, id: state.openaiPresetId });
+    event.target.inert = true;
+    try {
+      if (deleting) {
+        state.openaiPresets = state.openaiPresets.filter((preset) => preset.id !== selected.id);
+        state.openaiPresetId = 'default';
+      } else await saveCurrentPreset('openai', name);
+      persist(); dialog.close(); render();
+      host.querySelector('[data-openai-preset]')?.focus({ preventScroll: true });
+      toast(deleting ? '预设已删除，当前参数已保留' : '新预设已保存');
+    } catch (error) {
+      const snapshot = JSON.parse(previous);
+      state.openaiPresets = snapshot.presets; state.openaiPresetId = snapshot.id;
+      dialog.querySelector('.nai-dialog-error').textContent = error.message;
+    } finally { event.target.inert = false; }
+  });
+  paintIcons(); dialog.showModal();
+}
+
+function showOpenAIRequest() {
+  try {
+    commitOpenAIFields();
+    const urls = openAIURLs(state.openaiEndpoint, state.openaiPath);
+    const prepared = prepareCreation(captureSnapshot(state), {
+      profiles: effectiveProfiles(state.characterProfiles, currentChat().key),
+      processing: state.promptProcessing, tagLibrary: state.tagLibrary,
+    });
+    const body = buildOpenAIRequest(prepared.params, prepared.characterScene?.characterPrompts);
+    const overlay = document.getElementById('overlay-root');
+    overlay.innerHTML = `<dialog class="nai-preset-dialog openai-request-dialog" aria-label="生图请求"><header><h2>生图请求</h2>${iconButton('x', '关闭', 'close-request')}</header><p>POST ${esc(urls.generation)}</p><pre>${esc(JSON.stringify(body, null, 2))}</pre></dialog>`;
+    const dialog = overlay.querySelector('dialog');
+    dialog.querySelector('[data-action="close-request"]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => dialog.remove(), { once: true });
+    paintIcons(); dialog.showModal();
+  } catch (error) { toast(error.message); }
+}
+
+function updateNovelAIDirty() {
+  host.querySelectorAll('[data-nai-dirty]').forEach((node) => {
+    const dirty = novelAIPresetDirty(state);
+    node.textContent = dirty ? '有未保存修改' : '已保存';
+    node.dataset.dirty = String(dirty);
+  });
+}
+
+function commitNovelAIFields() {
+  state.novelai = normalizeNovelAI(state.novelai);
+  persist();
+  host.querySelectorAll('[data-nai]').forEach((input) => {
+    const key = input.dataset.nai;
+    if (!Object.hasOwn(NOVELAI_DEFAULTS, key)) return;
+    if (input.type === 'checkbox') input.checked = state.novelai[key];
+    else input.value = state.novelai[key];
+    if (key === 'sm') input.disabled = !isNAI3(state.novelai.model);
+    if (key === 'smDyn') input.disabled = !isNAI3(state.novelai.model) || !state.novelai.sm;
+    if (key === 'variety') input.disabled = !supportsVariety(state.novelai.model);
+    input.closest('.nai-toggle')?.classList.toggle('is-disabled', input.disabled);
+  });
+  const size = NOVELAI_SIZES.find((item) => item.width === state.novelai.width && item.height === state.novelai.height);
+  host.querySelectorAll('[data-nai-size]').forEach((input) => { input.value = size?.id || 'custom'; });
+  updateNovelAIDirty();
+}
+
+function openNovelAIPresetDialog(mode = 'save') {
+  const selected = selectedNovelAIPreset(state);
+  const deleting = mode === 'delete';
+  if (deleting && selected.id === 'default') return;
+  const overlay = document.getElementById('overlay-root');
+  overlay.innerHTML = `<dialog class="nai-preset-dialog" aria-labelledby="nai-dialog-title"><form>
+    <header><h2 id="nai-dialog-title">${deleting ? '删除预设' : '另存为预设'}</h2>${iconButton('x', '关闭', 'close-preset-dialog')}</header>
+    ${deleting ? `<p>删除预设“${esc(selected.name)}”？当前参数会保留。</p>` : field('预设名称', `<input name="name" maxlength="40" required autocomplete="off" placeholder="输入预设名称" value="${selected.id === 'default' ? '' : esc(`${selected.name} 副本`.slice(0, 40))}" />`)}
+    <p class="nai-dialog-error" role="alert"></p>
+    <footer>${button('x', '取消', 'close-preset-dialog', 'secondary')}<button type="submit" class="ui-button primary">${icon(deleting ? 'trash-2' : 'save')}<span>${deleting ? '删除预设' : '保存新预设'}</span></button></footer>
+  </form></dialog>`;
+  const dialog = overlay.querySelector('dialog');
+  dialog.querySelectorAll('[data-action="close-preset-dialog"]').forEach((node) => node.addEventListener('click', () => dialog.close()));
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  dialog.querySelector('form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (presetBusy) return;
+    const name = new FormData(event.target).get('name');
+    const previous = JSON.stringify({ presets: state.novelaiPresets, id: state.novelaiPresetId });
+    event.target.inert = true;
+    try {
+      if (deleting) {
+        state.novelaiPresets = state.novelaiPresets.filter((preset) => preset.id !== selected.id);
+        state.novelaiPresetId = 'default';
+      } else {
+        await saveCurrentPreset('novelai', name);
+      }
+      persist();
+      dialog.close();
+      render();
+      host.querySelector('[data-nai-preset]')?.focus({ preventScroll: true });
+      toast(deleting ? '预设已删除，当前参数已保留' : '新预设已保存');
+    } catch (error) {
+      const snapshot = JSON.parse(previous);
+      state.novelaiPresets = snapshot.presets; state.novelaiPresetId = snapshot.id;
+      dialog.querySelector('.nai-dialog-error').textContent = error.message;
+    } finally { event.target.inert = false; }
+  });
+  paintIcons();
+  dialog.showModal();
+}
+
+function updateComfyDirty() {
+  host.querySelectorAll('[data-comfy-dirty]').forEach((node) => {
+    const dirty = comfyPresetDirty(state);
+    node.textContent = dirty ? '有未保存修改' : '已保存';
+    node.dataset.dirty = String(dirty);
+  });
+  host.querySelectorAll('.comfy-warning').forEach((node) => {
+    const warnings = workflowWarnings(state.comfyui, comfyProbe?.objectInfo);
+    node.innerHTML = warnings.map((item) => `<p>${esc(item)}</p>`).join('');
+    node.hidden = !warnings.length;
+  });
+}
+
+function commitComfyFields() {
+  state.comfyui.params = normalizeComfyParams(state.comfyui.params);
+  persist();
+  host.querySelectorAll('[data-comfy]').forEach((input) => {
+    input.value = state.comfyui.params[input.dataset.comfy];
+  });
+  updateComfyDirty();
+}
+
+function changeComfy(operation, message) {
+  const snapshot = JSON.stringify({ config: state.comfyui, presets: state.comfyPresets, id: state.comfyPresetId });
+  try {
+    operation();
+    persist();
+    render();
+    if (message) toast(message);
+    return true;
+  } catch (error) {
+    const previous = JSON.parse(snapshot);
+    state.comfyui = previous.config;
+    state.comfyPresets = previous.presets;
+    state.comfyPresetId = previous.id;
+    toast(error.name === 'QuotaExceededError' ? '浏览器配置空间不足，请导出并删除一些预设后重试' : error.message);
+    return false;
+  }
+}
+
+function openComfyPresetDialog(deleting = false) {
+  commitComfyFields();
+  const selected = selectedComfyPreset(state);
+  if (deleting && selected.id === 'default') return;
+  const overlay = document.getElementById('overlay-root');
+  overlay.innerHTML = `<dialog class="nai-preset-dialog" aria-labelledby="comfy-dialog-title"><form>
+    <header><h2 id="comfy-dialog-title">${deleting ? '删除工作流预设' : '另存为工作流预设'}</h2>${iconButton('x', '关闭', 'close-comfy-dialog')}</header>
+    ${deleting ? `<p>删除预设“${esc(selected.name)}”？当前工作流与参数会保留。</p>` : field('预设名称', `<input name="name" maxlength="40" required autocomplete="off" placeholder="输入预设名称" value="${selected.id === 'default' ? '' : esc(`${selected.name} 副本`.slice(0, 40))}" />`)}
+    <p class="nai-dialog-error" role="alert"></p>
+    <footer>${button('x', '取消', 'close-comfy-dialog', 'secondary')}<button type="submit" class="ui-button primary">${icon(deleting ? 'trash-2' : 'save')}<span>${deleting ? '删除预设' : '保存新预设'}</span></button></footer>
+  </form></dialog>`;
+  const dialog = overlay.querySelector('dialog');
+  dialog.querySelectorAll('[data-action="close-comfy-dialog"]').forEach((node) => node.addEventListener('click', () => dialog.close()));
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  dialog.querySelector('form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (presetBusy) return;
+    const name = new FormData(event.target).get('name');
+    const previous = JSON.stringify({ presets: state.comfyPresets, id: state.comfyPresetId });
+    event.target.inert = true;
+    try {
+      if (deleting) {
+        state.comfyPresets = state.comfyPresets.filter((preset) => preset.id !== selected.id);
+        state.comfyPresetId = 'default';
+      } else await saveCurrentPreset('comfyui', name);
+      persist(); dialog.close(); render();
+      host.querySelector('[data-comfy-preset]')?.focus({ preventScroll: true });
+      toast(deleting ? '预设已删除，当前工作流已保留' : '工作流预设已保存');
+    } catch (error) {
+      const snapshot = JSON.parse(previous);
+      state.comfyPresets = snapshot.presets; state.comfyPresetId = snapshot.id;
+      dialog.querySelector('.nai-dialog-error').textContent = error.name === 'QuotaExceededError' ? '浏览器配置空间不足，请先删除一些预设' : error.message;
+    } finally { event.target.inert = false; }
+  });
+  paintIcons(); dialog.showModal();
+}
+
+function importComfyWorkflow() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json,application/json';
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      if (file.size > 512 * 1024) throw new Error('工作流文件需小于 512 KB');
+      const graph = parseWorkflow(await file.text());
+      changeComfy(() => {
+        state.comfyui = newComfyConfig(graph, file.name.replace(/\.json$/i, ''));
+        state.comfyPresetId = 'default';
+      }, '工作流已导入，可检查参数和节点映射');
+    } catch (error) { toast(error.message); }
+  });
+  input.click();
+}
+
+function exportComfyWorkflow() {
+  try {
+    commitComfyFields();
+    const graph = applyWorkflowParameters(state.comfyui);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(graph, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = 'linghuashi-comfyui-api.json'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('已导出应用当前参数的 API 工作流');
+  } catch (error) { toast(error.message); }
+}
+
+function updateConnectionStatus() {
+  refreshSetupSummary();
+  updateOpenAIModelStatus();
+  const status = host.querySelector('[data-connection-status]');
+  if (!status) return;
+  status.textContent = state.provider === 'openai' && connectionStatus.message.includes('生图')
+    ? connectionStatus.message.replace(/生图已验证|生图权限尚未验证/g, openAIGenerationVerified() ? '生图已验证' : '生图权限尚未验证')
+    : connectionStatus.message;
+  status.dataset.tone = connectionStatus.tone;
+  const endpoint = host.querySelector('[data-resolved-endpoint]');
+  endpoint.textContent = resolvedService ? `${resolvedService.title} · ${resolvedService.endpoint}` : '';
+  endpoint.hidden = !resolvedService;
+  host.querySelector('[data-action="test-connection"]').disabled = connectionStatus.tone === 'pending';
+  const quickTest = host.querySelector('[data-guide-action="image-test"]');
+  if (quickTest) quickTest.disabled = connectionStatus.tone === 'pending';
+  const diagnostics = host.querySelector('[data-action="network-diagnostics"]');
+  if (diagnostics) diagnostics.hidden = connectionStatus.tone !== 'error';
+  const fetchModels = host.querySelector('[data-action="openai-fetch-models"]');
+  if (fetchModels) fetchModels.disabled = connectionStatus.tone === 'pending';
+}
+
+function updateSDWebUIDirty() {
+  host?.querySelectorAll('[data-sdwebui-dirty]').forEach((node) => { node.textContent = sdwebuiPresetDirty(state) ? '有未保存修改' : '已保存'; });
+}
+
+function commitSDWebUIFields() {
+  state.sdwebui = normalizeSDWebUI(state.sdwebui);
+  host?.querySelectorAll('[data-sdwebui]').forEach((node) => {
+    if (node.type === 'checkbox') node.checked = state.sdwebui[node.dataset.sdwebui];
+    else node.value = state.sdwebui[node.dataset.sdwebui];
+  });
+  persist(); updateSDWebUIDirty();
+}
+
+function openSDWebUIPresetDialog(deleting = false) {
+  const selected = selectedSDWebUIPreset(state);
+  if (deleting && selected.id === 'default') return;
+  const overlay = document.getElementById('overlay-root');
+  overlay.innerHTML = `<dialog class="nai-preset-dialog" aria-label="${deleting ? '删除预设' : '另存为预设'}"><form>
+    <header><h2>${deleting ? '删除预设' : '另存为预设'}</h2>${iconButton('x', '关闭', 'sdwebui-dialog-close')}</header>
+    ${deleting ? `<p>删除“${esc(selected.name)}”？当前参数保留。</p>` : field('预设名称', '<input name="name" maxlength="40" required autocomplete="off" />')}
+    <p class="nai-dialog-error" role="alert"></p><footer>${button('x', '取消', 'sdwebui-dialog-close', 'secondary')}
+    <button type="submit" class="ui-button primary">${icon(deleting ? 'trash-2' : 'save')}<span>${deleting ? '删除' : '保存新预设'}</span></button></footer></form></dialog>`;
+  const dialog = overlay.querySelector('dialog');
+  dialog.querySelectorAll('[data-action="sdwebui-dialog-close"]').forEach((node) => node.addEventListener('click', () => dialog.close()));
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  dialog.querySelector('form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const previous = structuredClone({ presets: state.sdwebuiPresets, id: state.sdwebuiPresetId });
+    try {
+      if (deleting) { state.sdwebuiPresets = state.sdwebuiPresets.filter((item) => item.id !== selected.id); state.sdwebuiPresetId = 'default'; persist(); }
+      else await saveCurrentPreset('sdwebui', String(new FormData(event.target).get('name')));
+      dialog.close(); render(); toast(deleting ? '预设已删除' : '预设已保存');
+    } catch (error) {
+      state.sdwebuiPresets = previous.presets; state.sdwebuiPresetId = previous.id;
+      dialog.querySelector('.nai-dialog-error').textContent = error.message;
+    }
+  });
+  paintIcons(); dialog.showModal();
+}
+
+async function checkSDWebUIConnection(test) {
+  if (!test) {
+    connectionStatus = { message: credentials.sdwebui.endpoint.trim() ? '地址已填写，尚未测试' : '等待输入 SDWebUI 服务地址', tone: 'neutral' };
+    updateConnectionStatus(); return;
+  }
+  const controller = new AbortController(); connectionController = controller;
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  connectionStatus = { message: '正在读取模型、LoRA 和参数列表…', tone: 'pending' }; updateConnectionStatus();
+  try {
+    const base = sdwebuiBase(credentials.sdwebui.endpoint);
+    if (location.protocol === 'https:' && new URL(base).protocol === 'http:'
+      && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(base).hostname)) throw new Error('当前酒馆使用 HTTPS，请为远程 SDWebUI 配置 HTTPS 地址');
+    const result = await probeSDWebUI(base, state.connections.sdwebui, credentials.sdwebui.key, { signal: controller.signal });
+    if (connectionController !== controller || state.provider !== 'sdwebui') return;
+    sdwebuiProbe = result;
+    Object.assign(state.connections.sdwebui, { textTaskId: result.textTaskId, imageTaskId: result.imageTaskId, progressMode: result.progressMode });
+    persist();
+    connectionStatus = { message: `SDWebUI 已连接 · ${result.models.length} 个模型${result.unavailable.length ? ' · 部分可选列表不可用' : ''}`, tone: 'success' };
+    render();
+  } catch (error) {
+    if (connectionController !== controller) return;
+    connectionStatus = { message: controller.signal.aborted ? '连接超时，请检查服务地址和网络'
+      : error instanceof TypeError ? '无法连接 SDWebUI，请检查地址、HTTPS 和跨域设置' : error.message, tone: 'error' };
+  } finally {
+    clearTimeout(timeout);
+    if (connectionController === controller) { connectionController = null; updateConnectionStatus(); }
+  }
+}
+
+function resetConnection({ keepOpenAIModels = false } = {}) {
+  clearTimeout(connectionTimer);
+  connectionController?.abort();
+  connectionController = null;
+  resolvedService = null;
+  comfyProbe = null;
+  sdwebuiProbe = null;
+  if (!keepOpenAIModels) {
+    openaiModels = [];
+    Object.assign(openaiModelUI, { fetched: false, open: false, query: '' });
+  }
+  host?.querySelector('.comfy-service')?.remove();
+  if (host) updateComfyDirty();
+  connectionStatus = { message: state.provider === 'novelai' ? '等待输入秘钥' : '尚未测试', tone: 'neutral' };
+  if (host && !keepOpenAIModels) updateOpenAIModelList();
+}
+
+async function checkComfyConnection(current, test) {
+  if (!test) {
+    connectionStatus = { message: current.endpoint.trim() ? '地址已填写，尚未测试' : '等待输入 ComfyUI 服务地址', tone: 'neutral' };
+    updateConnectionStatus();
+    return;
+  }
+  const controller = new AbortController();
+  connectionController = controller;
+  const timeout = setTimeout(() => controller.abort(), state.comfyTimeout * 1000);
+  connectionStatus = { message: '正在读取服务、节点与队列信息…', tone: 'pending' };
+  updateConnectionStatus();
+  try {
+    const result = await probeComfyUI(current.endpoint, current.key, { signal: controller.signal, auth: current.auth });
+    if (connectionController !== controller || state.provider !== 'comfyui') return;
+    comfyProbe = result;
+    connectionStatus = { message: result.warnings.length ? 'ComfyUI 已连接，部分信息未读取' : 'ComfyUI 已连接', tone: 'success' };
+    render();
+  } catch (error) {
+    if (connectionController !== controller) return;
+    connectionStatus = { message: controller.signal.aborted ? '连接超时，请检查服务地址和网络' : error instanceof TypeError ? '连接失败，请检查 HTTPS、跨域设置和服务地址' : error.message, tone: 'error' };
+  } finally {
+    clearTimeout(timeout);
+    if (connectionController === controller) {
+      connectionController = null;
+      updateConnectionStatus();
+    }
+  }
+}
+
+async function checkConnection(test = false, keepModels = false) {
+  resetConnection({ keepOpenAIModels: state.provider === 'openai' && (test || keepModels) });
+  const provider = state.provider;
+  const current = { ...credentials[provider] };
+  if (provider === 'openai') {
+    return checkOpenAIConnection(test);
+  }
+  if (provider === 'comfyui') {
+    return checkComfyConnection(current, test);
+  }
+  if (provider === 'sdwebui') return checkSDWebUIConnection(test);
+  const route = resolveNovelAIService(current.key, current.endpoint);
+  if (route.kind !== 'resolved' && route.kind !== 'identify') {
+    connectionStatus = { message: route.message, tone: route.kind === 'error' ? 'error' : 'neutral' };
+    updateConnectionStatus();
+    return;
+  }
+  if (route.kind === 'resolved') resolvedService = route;
+  if (route.kind === 'resolved' && !test) {
+    connectionStatus = { message: `已选择${route.title}，尚未鉴权`, tone: 'neutral' };
+    updateConnectionStatus();
+    return;
+  }
+  if (route.id === 'custom') {
+    connectionStatus = { message: '已使用手动地址；该第三方暂不支持无扣费连接测试', tone: 'neutral' };
+    updateConnectionStatus();
+    return;
+  }
+  const controller = new AbortController();
+  connectionController = controller;
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  connectionStatus = { message: route.kind === 'identify' ? route.message : '正在验证秘钥…', tone: 'pending' };
+  updateConnectionStatus();
+  try {
+    if (route.kind === 'identify') {
+      resolvedService = await identifySkService(current.key, { signal: controller.signal });
+    } else {
+      const result = await probeService(route, current.key, { signal: controller.signal });
+      if (!result.valid) throw new Error(result.rejected ? '秘钥未通过鉴权，请检查是否有效' : '接口未返回有效鉴权结果，请稍后重试');
+    }
+    if (connectionController !== controller) return;
+    connectionStatus = { message: `${resolvedService.title} · 鉴权通过`, tone: 'success' };
+  } catch (error) {
+    if (connectionController !== controller) return;
+    resolvedService = null;
+    connectionStatus = { message: controller.signal.aborted ? '连接超时，请检查网络后重试' : error instanceof TypeError ? '无法连接接口，请检查网络或跨域设置' : error.message, tone: 'error' };
+  } finally {
+    clearTimeout(timeout);
+    if (connectionController === controller) {
+      connectionController = null;
+      updateConnectionStatus();
+    }
+  }
+}
+
+async function checkOpenAIConnection(test) {
+  let urls;
+  try {
+    urls = openAIURLs(state.openaiEndpoint, state.openaiPath);
+    resolvedService = { title: 'OpenAI兼容', endpoint: urls.generation };
+  } catch (error) {
+    connectionStatus = { message: error.message, tone: 'error' };
+    updateConnectionStatus(); return;
+  }
+  const key = credentials.openai.key;
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(new URL(urls.base).hostname);
+  if (!key.trim() && !local) {
+    connectionStatus = { message: '等待输入 API Key', tone: 'neutral' };
+    updateConnectionStatus(); return;
+  }
+  if (!test) {
+    connectionStatus = { message: '地址已填写，尚未测试', tone: 'neutral' };
+    updateConnectionStatus(); return;
+  }
+  const controller = new AbortController();
+  connectionController = controller;
+  const timeout = setTimeout(() => controller.abort(), Math.min(30, state.openaiTimeout) * 1000);
+  connectionStatus = { message: '正在获取模型列表…', tone: 'pending' };
+  updateConnectionStatus();
+  try {
+    const result = await probeOpenAIModels(urls.base, key, { signal: controller.signal });
+    if (connectionController !== controller || state.provider !== 'openai') return;
+    openaiModels = result.models;
+    Object.assign(openaiModelUI, { fetched: true, open: true });
+    connectionStatus = { message: `接口已响应 · ${result.models.length} 个模型；${openAIGenerationVerified() ? '生图已验证' : '生图权限尚未验证'}`, tone: 'success' };
+    render();
+  } catch (error) {
+    if (connectionController !== controller) return;
+    connectionStatus = { message: controller.signal.aborted ? '连接超时，请检查地址和网络'
+      : error instanceof TypeError ? '连接失败，请检查 HTTPS、跨域设置和接口地址' : error.message, tone: 'error' };
+  } finally {
+    clearTimeout(timeout);
+    if (connectionController === controller) {
+      connectionController = null; updateConnectionStatus();
+    }
+  }
+}
+
+function renderCharacters() {
+  return renderCharacterPage(state, profileUI, currentChat());
+}
+
+function loadProfileDraft(profileId = profileUI.draft?.id) {
+  const profiles = profileUI.scope === 'chat' ? effectiveProfiles(state.characterProfiles, currentChat().key) : state.characterProfiles.profiles;
+  profileUI.draft = structuredClone(profiles.find((item) => item.id === profileId) || profiles[0] || null);
+  profileUI.dirty = false; profileUI.error = ''; profileUI.chatKey = currentChat().key || '';
+}
+
+function discardProfileChanges() {
+  return !profileUI.dirty || confirmDiscardChanges('角色档案有未保存修改', profileUI.draft?.name || '当前角色档案');
+}
+
+function useLiveCharacterScene() {
+  const frozen = state.characterSceneOverride;
+  if (frozen?.applied && (!state.characterSceneOverrideProvider || state.characterSceneOverrideProvider === state.provider)) {
+    const params = state.provider === 'comfyui' ? state.comfyui.params : state[state.provider];
+    params.positive = frozen.basePositive; params.negative = frozen.baseNegative;
+  }
+  state.characterSceneOverride = null;
+  state.characterSceneOverrideProvider = '';
+  if (frozen && state.provider === 'comfyui') state.comfyui.params.characterPrompts = '[]';
+}
+
+async function refreshProfileCards() {
+  if (profileUI.busy) return;
+  profileUI.busy = true; profileUI.error = '';
+  try {
+    const data = await assistantHostRequest('characters', {}, { timeout: 20 });
+    if (!Array.isArray(data?.characters) || data.characters.some((row) => !row
+      || typeof row.avatar !== 'string' || typeof row.name !== 'string')) {
+      throw new Error('酒馆返回的角色列表格式不完整，已有列表已保留，请重新读取');
+    }
+    profileUI.characters = data.characters.slice(0, 1000);
+  } catch (error) { profileUI.error = error.message; }
+  finally { profileUI.busy = false; render(); }
+}
+
+// One text call for either the manual button or the automatic pass.
+async function profileRefreshText(messages, options, signal) {
+  if (options.source === 'api') return await requestAssistantText(options, assistantUI.key, messages, { signal, relay: assistantRelayRequest });
+  // The host answers with a bare string unless diagnostics are requested.
+  const result = await assistantHostRequest('text', { messages, diagnostics: true,
+    taskOptions: { maxTokens: options.maxTokens, responseMode: options.responseMode, tavernModel: options.tavernModel } },
+  { signal, timeout: options.timeout });
+  return typeof result === 'string' ? result : result?.text ?? '';
+}
+
+function saveRefreshedProfile(profile, chatKey) {
+  const global = (state.characterProfiles?.profiles || []).some((row) => row.id === profile.id);
+  state.characterProfiles = saveProfile(state.characterProfiles, profile, global ? '' : chatKey);
+}
+
+// Runs right before the prompt is written, so the plan and the drawing see today's
+// wardrobe and body instead of the state from the last manual refresh.
+async function autoRefreshProfiles(context, options, signal) {
+  if (!options.autoProfileRefresh) return 0;
+  const every = Math.max(1, Number(options.profileRefreshEvery) || 1);
+  const chatKey = String(context.chatKey || '');
+  const count = Array.isArray(context.messages) ? context.messages.length : 0;
+  const cursor = state.profileRefreshCursor;
+  if (cursor && cursor.chatKey === chatKey && count >= cursor.count && count - cursor.count < every) return 0;
+  const entries = context.characterScene?.entries || [];
+  if (!entries.length) return 0;
+  const profiles = [...new Map(entries.map((entry) => [entry.profile?.id, entry.profile])).values()]
+    .filter((profile) => profile && profile.enabled !== false).slice(0, 4);
+  let touched = 0;
+  let failures = 0;
+  for (const profile of profiles) {
+    try {
+      const messages = buildProfileRefreshMessages({ profile, chat: context.messages, target: context.target,
+        tags: options.profileRefreshTags }, options);
+      const raw = await profileRefreshText(messages, options, signal);
+      const { profile: updated, changes } = applyProfileRefresh(profile, parseProfileRefresh(raw));
+      if (!changes.length) continue;
+      saveRefreshedProfile(updated, chatKey);
+      touched += changes.length;
+    } catch (error) {
+      // A failed refresh must never block the picture, but it must not burn the interval either.
+      if (error?.name === 'AbortError') { failures += 1; break; }
+      failures += 1;
+      console.warn('[linghuashi] 档案自动更新失败', error);
+    }
+  }
+  if (!failures) state.profileRefreshCursor = { chatKey, count };
+  if (!touched) {
+    if (!failures) { try { persist(); } catch { /* cursor is best effort */ } }
+    return 0;
+  }
+  const fresh = effectiveProfiles(state.characterProfiles, chatKey);
+  for (const entry of entries) {
+    const row = fresh.find((item) => item.id === entry.profile?.id);
+    if (row) entry.profile = structuredClone(row);
+  }
+  delete context.characterScene.applied;
+  delete context.characterScene.characterPrompts;
+  try { persist(); } catch { /* keep the refreshed values in memory even if the save is full */ }
+  return touched;
+}
+
+// Lets the character profile maintain itself from the story: the text model reads the
+// newest messages and writes the live wardrobe and body state back into the open draft.
+async function refreshProfileFromStory() {
+  const draftProfile = profileUI.draft;
+  if (profileUI.busy || !draftProfile) return;
+  profileUI.busy = true; profileUI.error = '';
+  const controller = new AbortController();
+  render(true);
+  try {
+    const options = normalizeAssistant(state.assistant);
+    await saveAssistantKey();
+    const context = await assistantHostRequest('context', { contextSelection: null },
+      { signal: controller.signal, timeout: options.timeout });
+    if (!String(context?.target || '').trim()) throw new Error('请先打开包含角色回复的聊天');
+    const messages = buildProfileRefreshMessages({ profile: draftProfile, chat: context.messages, target: context.target,
+      tags: options.profileRefreshTags }, options);
+    const raw = await profileRefreshText(messages, options, controller.signal);
+    const { profile, changes } = applyProfileRefresh(draftProfile, parseProfileRefresh(raw));
+    if (!changes.length) { toast('AI 没有发现需要更新的档案内容'); return; }
+    profileUI.draft = profile; profileUI.dirty = true;
+    toast(`AI 已更新 ${changes.length} 项，请核对后保存`);
+  } catch (error) {
+    profileUI.error = error.name === 'TimeoutError' ? '文字接口处理超时，请稍后重试' : error.message;
+  } finally { profileUI.busy = false; render(true); }
+}
+
+function refreshTemporaryScene(replaceOutfits = []) {  const chat = currentChat();
+  const next = reconcileTemporaryScene(state.characterSceneOverride,
+    resolveCharacterScene(state.characterProfiles, chat.key, chat.avatars), replaceOutfits);
+  useLiveCharacterScene();
+  if (next) {
+    state.characterSceneOverride = next;
+    state.characterSceneOverrideProvider = state.provider;
+  }
+}
+
+function saveProfileParticipants(selection, replaceOutfits = []) {
+  const key = currentChat().key;
+  if (key) state.characterProfiles = updateProfileChat(state.characterProfiles, key, { selection });
+  else state.characterProfiles.selection = selection || [];
+  refreshTemporaryScene(replaceOutfits); persist();
+  host?.querySelectorAll('[data-profile-auto]').forEach((node) => { node.checked = selection === null; });
+}
+
+function updateProfileParticipant(target) {
+  const scene = editCharacterParticipant(captureSnapshot(state).characterScene,
+    target.dataset.profileId, target.dataset.participantField, target.value);
+  if (state.characterSceneOverride) saveCharacterSceneOverride(scene);
+  else saveProfileParticipants(scene.entries.map(({ profile, ...item }) => item));
+}
+
+function saveCharacterSceneOverride(scene) {
+  useLiveCharacterScene();
+  state.characterSceneOverride = scene;
+  state.characterSceneOverrideProvider = state.provider;
+  persist();
+}
+
+function updateOutfitDraft(target) {
+  const row = target.closest('[data-outfit-row]');
+  if (!row || row.hasAttribute('data-outfit-project')) return false;
+  const id = row.dataset.outfitRow, draft = profileUI.outfitDrafts[id] || {};
+  for (const control of row.querySelectorAll('[data-outfit-field]')) draft[control.dataset.outfitField] = control.value;
+  profileUI.outfitDrafts[id] = draft;
+  const entry = captureSnapshot(state).characterScene?.entries.find((entry) => entry.profileId === id);
+  refreshOutfitDraftFeedback(row, entry, draft);
+  return true;
+}
+
+function applySelectedOutfit(profileId) {
+  const chat = currentChat(), choice = profileUI.outfitDrafts[profileId];
+  if (!choice) throw new Error('请先选择服装方式');
+  if (choice.scope === 'global') {
+    state.characterProfiles = setGlobalOutfit(state.characterProfiles, profileId, choice, randomUUID());
+    refreshTemporaryScene([profileId]); loadProfileDraft();
+  } else {
+    const scene = choice.scope === 'chat' ? resolveCharacterScene(state.characterProfiles, chat.key, chat.avatars)
+      : captureSnapshot(state).characterScene;
+    const next = applySceneOutfit(scene, profileId, choice, choice.scope === 'chat' ? 'chat' : 'once');
+    if (choice.scope === 'chat') {
+      if (!chat.key) throw new Error('请先打开一个聊天');
+      saveProfileParticipants(next.entries.map(({ profile, ...entry }) => entry), [profileId]);
+    } else {
+      useLiveCharacterScene();
+      state.characterSceneOverride = next; state.characterSceneOverrideProvider = state.provider;
+    }
+  }
+  delete profileUI.outfitDrafts[profileId];
+  persist(); render(true);
+  toast(choice.scope === 'global' ? '全局默认服装已保存，已有聊天覆盖保留' : choice.scope === 'chat' ? '已应用到当前聊天' : '已应用到下一次生图');
+}
+
+async function resolvePendingOutfits() {
+  const chat = currentChat(), scene = captureSnapshot(state).characterScene;
+  const choices = pendingOutfitDrafts(scene, profileUI.outfitDrafts);
+  if (!choices.length) return true;
+  const revision = JSON.stringify([chat.key, state.provider, scene, state.characterProfiles, profileUI.outfitDrafts]);
+  const decision = await confirmOutfitDrafts(choices);
+  if (decision === 'cancel') return false;
+  if (revision !== JSON.stringify([currentChat().key, state.provider, captureSnapshot(state).characterScene,
+    state.characterProfiles, profileUI.outfitDrafts])) throw new Error('角色或服装配置已变化，请重新生成');
+  if (decision === 'original') return true;
+  const next = prepareOutfitDrafts({ library: state.characterProfiles, scene, chatKey: chat.key, avatars: chat.avatars }, choices, randomUUID);
+  const previous = { characterProfiles: state.characterProfiles, characterSceneOverride: state.characterSceneOverride,
+    characterSceneOverrideProvider: state.characterSceneOverrideProvider };
+  Object.assign(state, { characterProfiles: next.library, characterSceneOverride: next.scene, characterSceneOverrideProvider: state.provider });
+  try { persist(); } catch (error) { Object.assign(state, previous); throw error; }
+  for (const row of choices) delete profileUI.outfitDrafts[row.profileId];
+  loadProfileDraft(); return 'applied';
+}
+
+function consumeTemporaryOutfits(submitted) {
+  const current = state.characterSceneOverride;
+  const temporary = current?.entries.filter((entry) => entry.outfitScope === 'once') || [];
+  if (!temporary.length || !temporary.every((entry) => {
+    const used = submitted?.entries.find((row) => row.profileId === entry.profileId);
+    return used?.outfitScope === 'once' && used.outfitMode === entry.outfitMode
+      && used.outfitId === entry.outfitId && used.outfitPrompt === entry.outfitPrompt;
+  })) return;
+  useLiveCharacterScene();
+  try { persist(); } catch (error) { toast(`任务已保存，临时服装清理未同步：${error.message}`); }
+}
+
+function setProfileParticipant(profileId, checked) {
+  const chat = currentChat();
+  const params = state.provider === 'comfyui' ? state.comfyui.params : state[state.provider];
+  const scene = selectCharacterParticipant(captureSnapshot(state).characterScene, profileId, checked,
+    effectiveProfiles(state.characterProfiles, chat.key), characterLimit(state.provider, params.model));
+  if (state.characterSceneOverride) saveCharacterSceneOverride(scene);
+  else saveProfileParticipants(scene.entries.map(({ profile, ...entry }) => entry));
+}
+
+async function importProfiles(file) {
+  if (!file) return;
+  try {
+    if (file.size > 2 * 1024 * 1024) throw new Error('档案文件需小于 2 MB');
+    const raw = JSON.parse(await file.text());
+    if (raw.version !== 1 || !Array.isArray(raw.profiles)) throw new Error('请选择灵画师导出的角色档案 JSON');
+    const imported = normalizeProfileLibrary(raw);
+    if (!imported.profiles.length) throw new Error('文件中没有有效角色档案');
+    if (!await discardProfileChanges()) return;
+    const collisions = imported.profiles.filter((profile) => state.characterProfiles.profiles.some((item) => item.id === profile.id));
+    if (collisions.length && !window.confirm(`导入将覆盖 ${collisions.length} 个同 ID 全局档案，继续？`)) return;
+    let next = state.characterProfiles;
+    for (const profile of imported.profiles) next = saveProfile(next, profile);
+    state.characterProfiles = next; useLiveCharacterScene(); profileUI.scope = 'global';
+    loadProfileDraft(imported.profiles[0].id); persist(); render(); toast(`已导入 ${imported.profiles.length} 个档案`);
+  } catch (error) { toast(`档案导入失败：${error.message}`); }
+}
+
+function renderStyles() {
+  return renderArtists(state, artistUI);
+}
+
+async function switchConnectionProfile(id) {
+  const provider = state.provider;
+  if (!id) { state.connectionProfileIds[provider] = ''; persist(); render(); return; }
+  await presetOperation(async () => {
+    await saveConnection(provider);
+    const entry = state.connectionProfiles[provider].find((item) => item.id === id);
+    if (!entry) throw new Error('接口配置不存在');
+    const key = await credentialRequest('read', provider, { ref: entry.connection.keyRef });
+    setCurrentConnection(state, provider, entry.connection);
+    state.connectionProfileIds[provider] = id;
+    Object.assign(credentials[provider], { key, endpoint: entry.connection.endpoint, auth: entry.connection.auth || 'none' });
+    credentialState[provider].revision++;
+    credentialState[provider].dirty = false;
+    credentialState[provider].error = false;
+    credentialState[provider].message = key ? credentialSavedMessage(entry.connection.keyRef) : '';
+    keyVisible = false;
+    resetConnection();
+    if (provider === 'openai') { apiEditRevision++; await syncAssistantConnection('openai'); }
+    persist(); render(); checkConnection();
+    toast(`已切换到 ${entry.name}`);
+  });
+}
+
+function connectionDialog(action) {
+  const provider = state.provider, id = state.connectionProfileIds[provider];
+  const selected = state.connectionProfiles[provider].find((entry) => entry.id === id);
+  const title = ({ new: '新增接口', copy: '复制当前连接', rename: '重命名接口', delete: '删除接口配置' })[action];
+  if (['rename', 'delete'].includes(action) && !selected) return;
+  const overlay = document.getElementById('overlay-root');
+  overlay.innerHTML = `<dialog class="nai-preset-dialog" aria-label="${title}"><form><header><h2>${title}</h2>${iconButton('x', '关闭', 'connection-dialog-close')}</header>
+    ${action === 'delete' ? `<p>删除“${esc(selected.name)}”？绑定此接口的参数预设将改为仅载入参数，当前连接保留。</p>`
+      : field('接口名称', `<input name="name" maxlength="40" required value="${esc(action === 'rename' ? selected.name : action === 'copy' ? `${selected?.name || '当前接口'} 副本` : '')}" />`)}
+    <p class="nai-dialog-error" role="alert"></p><footer>${button('x', '取消', 'connection-dialog-close', 'secondary')}<button type="submit" class="ui-button primary">${icon(action === 'delete' ? 'trash-2' : 'save')}<span>${action === 'delete' ? '删除' : '保存'}</span></button></footer></form></dialog>`;
+  const dialog = overlay.querySelector('dialog');
+  dialog.querySelectorAll('[data-action="connection-dialog-close"]').forEach((node) => node.onclick = () => dialog.close());
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  dialog.querySelector('form').onsubmit = async (event) => {
+    event.preventDefault();
+    const submit = dialog.querySelector('[type="submit"]');
+    if (submit.disabled || presetBusy) return;
+    submit.disabled = true;
+    let previous;
+    try {
+      await presetOperation(async () => {
+        await saveConnection(provider);
+        previous = structuredClone(state);
+        if (action === 'delete') deleteConnectionProfile(state, provider, id);
+        else if (action === 'rename') {
+          const name = dialog.querySelector('[name="name"]').value.trim();
+          if (!name || state.connectionProfiles[provider].some((entry) => entry.id !== id && entry.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new Error('名称为空或已存在');
+          selected.name = name;
+        } else saveConnectionProfile(state, provider, dialog.querySelector('[name="name"]').value);
+        persist();
+      });
+      dialog.close(); render(); toast(action === 'delete' ? '接口配置已删除' : '接口配置已保存');
+    } catch (error) {
+      if (previous) state = previous;
+      dialog.querySelector('.nai-dialog-error').textContent = error.message;
+    } finally { submit.disabled = false; }
+  };
+  paintIcons(); dialog.showModal();
+}
+
+function discardArtistChanges() {
+  return !artistUI.dirty || confirmDiscardChanges('画师串有未保存修改', artistUI.draft?.name || '当前画师串');
+}
+
+function artistDraft(value) {
+  artistUI.draft = structuredClone(value);
+  artistUI.dirty = !state.artistLibrary.some((entry) => entry.id === value?.id);
+}
+
+function saveArtistDraft() {
+  const previous = state.artistLibrary;
+  state.artistLibrary = saveArtist(previous, artistUI.draft);
+  try { persist(); }
+  catch (error) { state.artistLibrary = previous; throw error; }
+  artistUI.draft = structuredClone(state.artistLibrary.find((entry) => entry.id === artistUI.draft.id));
+  artistUI.dirty = false; render(); toast('画师串已保存');
+}
+
+function artistFileInput(action) {
+  if (artistUI.previewBusy) return;
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = action === 'import' ? '.json,application/json' : 'image/png,image/jpeg,image/webp';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    const draftId = artistUI.draft?.id;
+    try {
+      if (action === 'import') {
+        if (file.size > 1024 * 1024) throw new Error('导入文件需小于 1 MB');
+        if (!await discardArtistChanges()) return;
+        const previous = state.artistLibrary;
+        state.artistLibrary = importArtistLibrary(previous, JSON.parse(await file.text()));
+        try { persist(); } catch (error) { state.artistLibrary = previous; throw error; }
+        artistDraft(state.artistLibrary.at(-1)); render(); toast('画师串已导入，同名项已另存');
+      } else {
+        if (file.size > 8 * 1024 * 1024 || !['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('请选择小于 8 MB 的 PNG、JPG 或 WebP');
+        artistUI.previewBusy = true;
+        const bitmap = await createImageBitmap(file);
+        try {
+          if (bitmap.width * bitmap.height > 40000000) throw new Error('预览图像素过大，请先缩小');
+          const canvas = document.createElement('canvas');
+          const scale = Math.min(1, 192 / Math.max(bitmap.width, bitmap.height));
+          canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+          canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+          const preview = canvas.toDataURL('image/webp', .7);
+          if (preview.length > 60000) throw new Error('预览图压缩后仍过大，请换一张图片');
+          if (artistUI.draft?.id !== draftId) return;
+          artistUI.draft.preview = preview; artistUI.dirty = true; render(true);
+        } finally { bitmap.close(); }
+      }
+    } catch (error) { toast(`操作失败：${error.message}`); }
+    finally { artistUI.previewBusy = false; }
+  };
+  input.click();
+}
+
+function applyArtistEntry(entry, options = artistUI) {
+  if (!entry) throw new Error('请选择画师串');
+  applyArtist(state, entry, options);
+  persist(); render(); toast('画风已载入当前生图参数');
+}
+
+function renderGallery() {
+  return renderDrawingManager(drawings, drawingUI);
+}
+
+const releasePanel = new ReleasePanel({
+  getTheme: () => state.characterTheme,
+  onChange: refreshUpdateNavigation,
+  beforeUpdate: async () => {
+    await backupPanel.flush();
+    await backupPanel.ready();
+    if (backupPanel.active() || backupPanel.ui.busy) throw new Error('请等待当前生图、助手、编辑或备份任务完成后再更新');
+    const records = await backupPanel.tasks();
+    if (records.rows.some((row) => ['running', 'queued'].includes(row.status))) throw new Error('同账号仍有执行中或排队任务，请完成后再更新');
+  },
+});
+const changelogPanel = new ChangelogPanel(releasePanel);
+const localToolsPanel = new LocalToolsPanel({
+  getSettings: () => state.localTools,
+  setSettings: (value) => {
+    const previous = state.localTools; state.localTools = value;
+    try { persist(); } catch (error) { state.localTools = previous; throw error; }
+  },
+  gallery: () => drawingGroups(drawings), storageLocation: () => state.cacheLocation,
+  materialize: (item) => drawingLibrary.materialize(item),
+  applyTags: (tags, append) => {
+    if (!tags.trim()) throw new Error('请先检查并填写反推标签');
+    const { params } = globalTagContext();
+    const positive = append ? [params.positive?.trim(), tags.trim()].filter(Boolean).join(', ') : tags.trim();
+    if (positive.length > 12000) throw new Error('合并后超过 12000 字符，请精简标签');
+    insertGlobalTags({ ...params, positive });
+  },
+  store: saveLocalToolsResult,
+});
+const componentsPanel = new ComponentsPanel(localToolsPanel);
+const debugToolsPanel = new DebugToolsPanel({
+  provider: state.provider, network: networkDiagnosticPanel, networkContext, failures: recentGenerationFailures,
+  storageContext: () => {
+    const params = state.provider === 'comfyui' ? state.comfyui.params : state[state.provider];
+    return {
+      storageLocation: state.cacheLocation, configCacheAvailable,
+      runtime: { running: taskQueue.running, queued: taskQueue.jobs.filter((row) => row.status === 'queued').length,
+        generationMode: state.generationMode, concurrency: state.concurrency, width: params?.width, height: params?.height, samples: params?.nSamples || params?.n || 1 },
+      databases: [
+        { id: 'drawings', name: storageKey('linghuashi-drawings-v1'), stores: ['drawings', 'meta'] },
+        { id: 'tasks', name: storageKey('linghuashi-tasks-v1'), stores: ['tasks'] },
+        { id: 'references', name: storageKey(`linghuashi-references-${currentAccount()}`), stores: ['assets'] },
+      ],
+      ...(isInstalled() ? { serverStatus: () => storageRequest('diagnostics/status') } : {}),
+    };
+  },
+});
+
+function refreshUpdateNavigation() {
+  const button = host?.querySelector('.plugin-nav > button[data-page="changelog"]');
+  const badge = button?.querySelector('[data-release-nav-badge]');
+  if (!badge) return;
+  badge.hidden = !releasePanel.hasUpdate;
+  if (releasePanel.hasUpdate) {
+    const description = `发现新版本 v${releasePanel.state.release.version}，点击查看更新动态`;
+    button.title = description;
+    button.setAttribute('aria-description', description);
+  } else {
+    button.removeAttribute('title');
+    button.removeAttribute('aria-description');
+  }
+}
+
+function renderConsole() {
+  profileUI.outfitDrafts = outfitDraftSessions.forChat(currentChat().key || '');
+  const readiness = setupReadiness();
+  const renderer = { settings: () => renderSettings(state, backupPanel.html() + recoveryPanel.html(), renderStartGuide(state, readiness)), assistant: () => renderAssistant(state, assistantUI, assistantPresetPanel.html(), assistantWorkflowPanel.html(),
+    { status: readinessBadge(readiness.assistant, `data-assistant-state="${assistantUI.busy}"`),
+      repairs: renderFailureActions(assistantFailureActions()),
+      prompts: taskPromptPanel.entry(), schemes: assistantSchemePanel.html(), diagnostics: assistantDiagnosticPanel.html(), lint: assistantLintPanel.html(),
+      history: assistantHistoryPanel.html(), recovery: assistantRecoveryPanel.html(), context: assistantContextPanel.html(),
+      scene: assistantScenePanel.html(), compatibility: renderAssistantCompatibility(state, assistantUI), budget: renderAssistantBudget(assistantUI.budget) }), comic: () => comicPanel.html(), reader: () => readerPanel.html(), generate: renderGenerate, batch: () => workbenchPanel.html() + renderTasks(), connection: renderConnection, characters: renderCharacters, styles: renderStyles, tags: () => tagPanel.html(), processing: () => promptProcessingPanel.html(), gallery: renderGallery, components: () => componentsPanel.html(), debug: () => debugToolsPanel.html(), changelog: () => changelogPanel.html() }[state.page] || (() => renderSettings(state, backupPanel.html()));
+  const navigationPage = state.page === 'batch' ? 'generate' : state.page;
+  const setupPage = ['settings', 'connection', 'generate', 'assistant', 'comic'].includes(state.page);
+  const sessionName = isInstalled() ? esc(currentChat().name) : '林间的旅人';
+  const sessionCount = isInstalled() ? currentChat().count : 12;
+  return `<div class="plugin-shell">
+    <header class="plugin-header"><div class="plugin-brand"><span class="brand-mark">${pluginIcon(state.characterTheme)}</span><div class="brand-copy"><strong>${esc(config.name)}</strong><span class="brand-subtitle">一款对萌新友好的生图扩展插件，愿世间充满和平友爱~</span></div></div><div class="plugin-header-right"><span class="session-label">${icon('message-square')}<span class="session-name" title="${sessionName}">${sessionName}</span></span>${iconButton('circle-help', '使用引导', 'start-guide')}${iconButton('more-horizontal', '更多操作', 'more')}</div></header>
+    <div class="plugin-body"><nav class="plugin-nav" aria-label="插件导航"><span class="nav-caption">工作空间</span>${navigation.map((item) => `<button type="button" data-page="${item.id}" class="${navigationPage === item.id ? 'active' : ''}" aria-current="${navigationPage === item.id ? 'page' : 'false'}">${icon(item.icon)}<span>${item.title}</span>${item.id === 'gallery' ? `<small>${state.history.length}</small>` : item.id === 'changelog' ? '<span class="nav-update-alert" data-release-nav-badge aria-hidden="true" hidden>!</span>' : ''}</button>`).join('')}<div class="nav-bottom"><span class="connection-dot"></span><span>生图工坊</span><small>${RELEASE.version}</small></div></nav><main class="plugin-content">${configCacheAvailable ? '' : `<p class="configuration-cache-status" role="status">${icon('database')}<span>${isInstalled() ? '浏览器设置缓存不可用；配置将继续同步到当前酒馆账号。' : '浏览器设置缓存不可用；本次修改仅在当前页面保留，请导出备份。'}</span></p>`}${setupPage ? experienceToolbar() + `<div data-setup-root>${renderReadiness(readiness, setupSummary(), setupExpanded)}</div>` : ''}${renderCreationModes(state.page)}${renderer()}</main></div>
+    <footer class="plugin-bottom"><span>${icon(state.enabled ? 'circle-check' : 'circle')}${!state.enabled ? '插件已关闭' : state.page === 'generate' ? GENERATION_MODES.find((mode) => mode.id === state.provider)?.title || '自定义接口' : '配置已载入'}</span><div class="bottom-actions"><span>当前会话 · ${sessionCount} 条消息</span>${workflowReturn ? guideCommand('return', workflowReturn.label, 'arrow-left') : ''}<div data-page-primary>${primaryPageAction()}</div></div></footer>
+  </div>`;
+}
+
+function renderChatBrand() {
+  return `${pluginIcon(state.characterTheme, 'chat-plugin-logo')}<span class="chat-brand-copy"><strong>${esc(config.name)}</strong><span class="scene-name">晨雾湖畔</span></span>`;
+}
+
+function renderChat() {
+  return `<div class="chat-shell">
+    <header class="chat-header"><div>${iconButton('arrow-left', '返回设置控制台', 'console')}<div class="chat-avatar">${icon('user-round')}</div><div><strong>林间的旅人</strong><span>单人聊天</span></div></div><div>${iconButton('settings-2', '打开生图设置', 'console')}${iconButton('more-horizontal', '会话选项', 'more')}</div></header>
+    <main class="chat-messages">
+      <div class="chat-date"><span>今天 · 20:30</span></div>
+      <article class="chat-message user-message"><div class="message-avatar">${icon('user-round')}</div><div class="message-body"><div class="message-meta"><strong>你</strong><time>20:30</time></div><p>我们沿着山路走了一会儿。前面那片湖，看起来很安静。</p></div></article>
+      <article class="chat-message character-message"><div class="message-avatar character">${icon('sparkles')}</div><div class="message-body"><div class="message-meta"><strong>旅人</strong><time>20:31</time><span>#12</span></div><p>他停下脚步，拨开眼前低垂的枝叶。</p><p>薄雾在湖面缓缓散开，远山映在水里。岸边的木屋亮着暖色的灯，松林间传来很轻的风声。</p><p class="dialogue">“今晚就在这里歇一歇吧。”</p>
+        <section class="chat-image-card"><div class="chat-image-heading"><span>${renderChatBrand()}</span><div class="chat-drawing-status">${chibi(statusPose(), 'chat-mascot')}${statusBadge()}</div></div><div class="chat-image-content">${resultMedia(true)}</div>
+          <div class="chat-card-actions"><button type="button" class="text-button" data-action="edit-prompt">${icon('sliders-horizontal')}提示词</button><div>${iconButton('star', '收藏图片', 'favorite')}${iconButton('arrow-down-to-line', '下载图片', 'download')}${iconButton('refresh-cw', '重新生成', 'generate')}</div></div>
+          ${editPrompt ? `<div class="chat-prompt-editor"><textarea aria-label="聊天图片提示词" ${state.provider === 'novelai' ? 'data-nai="positive"' : state.provider === 'openai' ? 'data-openai="positive"' : state.provider === 'sdwebui' ? 'data-sdwebui="positive"' : `data-comfy="positive" ${state.comfyui.mapping.positive ? '' : 'disabled'}`}>${esc(state.provider === 'comfyui' ? state.comfyui.params.positive : state[state.provider].positive)}</textarea>${state.provider === 'openai' && isOpenAINovelAI(state.openai.model) ? field('负面提示词', `<textarea rows="3" aria-label="聊天图片负面提示词" data-openai="negative" maxlength="32000" spellcheck="false">${esc(state.openai.negative)}</textarea>`) : ''}${button('sparkles', '生成图像', 'generate', 'primary')}</div>` : ''}
+        </section><div class="message-tools">${iconButton('copy', '复制消息', 'copy-message')}${iconButton('refresh-cw', '重新生成图片', 'generate')}<span>1 / 1</span></div>
+      </div></article>
+    </main>
+    <form class="chat-composer"><textarea id="chat-input" rows="1" aria-label="发送消息" placeholder="继续这段故事..." maxlength="2000"></textarea><button type="submit" class="send-button" aria-label="发送消息" title="发送消息">${icon('send')}</button></form>
+  </div>`;
+}
+
+function applyTokens() {
+  const appearance = getCharacterTheme(state.characterTheme);
+  document.documentElement.dataset.theme = config.theme;
+  document.documentElement.dataset.characterTheme = appearance.id;
+  document.documentElement.dataset.navigation = config.navigation;
+  document.documentElement.dataset.density = config.density;
+  document.documentElement.style.setProperty('--accent-selected', characterThemeAccent(appearance.id, config.accent));
+  document.documentElement.style.setProperty('--sidebar-width', `${config.sidebarWidth}px`);
+  document.documentElement.style.setProperty('--radius', `${config.radius}px`);
+  document.documentElement.style.setProperty('--font-size', `${config.fontSize}px`);
+  document.documentElement.style.setProperty('--chat-image-width', `${config.imageWidth}%`);
+  document.documentElement.style.colorScheme = config.theme;
+  if (window.parent !== window) postWindowMessage(window.parent, { type: 'draw-lab:appearance', characterTheme: appearance.id });
+}
+
+function render(force = false) {
+  if (!config || rendering) return;
+  const samePage = host.dataset.renderedPage === state.page && host.dataset.renderedSurface === config.surface;
+  const editing = document.activeElement;
+  if (!force && samePage && host.contains(editing)
+    && (editing?.matches('textarea, input:not([type]), input[type="text"], input[type="password"], input[type="url"], input[type="search"], input[type="number"], input[type="email"], [contenteditable="true"]')
+      || editing?.isContentEditable)) {
+    refreshBackgroundStatus();
+    return;
+  }
+  // Background task polling must not replace the mobile form or its native picker.
+  if (!force && samePage && state.page === 'assistant' && config.surface === 'console') {
+    refreshAssistantStatus();
+    return;
+  }
+  if (!force && samePage && state.page === 'reader' && config.surface === 'console') return;
+  if (!force && samePage && state.page === 'comic' && config.surface === 'console') {
+    comicPanel.refreshStatus(); return;
+  }
+  if (!force && advancedPanel.ui.painting) return;
+  if (!force && samePage && state.page === 'generate' && config.surface === 'console'
+    && host.contains(editing) && editing?.matches('input, textarea')
+    && !['checkbox', 'radio', 'range', 'color', 'file', 'button', 'submit', 'reset'].includes(editing.type)) {
+    refreshGenerationStatus(); return;
+  }
+  // Replacing a focused input closes mobile keyboards even if focus is restored afterward.
+  if (!force && samePage && state.page === 'connection' && config.surface === 'console'
+    && host.contains(editing) && editing?.matches('input, textarea')
+    && !['checkbox', 'radio', 'range', 'color', 'file', 'button', 'submit', 'reset'].includes(editing.type)) {
+    updateConnectionStatus();
+    updateCredentialStatus();
+    refreshSaveStatus();
+    return;
+  }
+  if (!force && host.dataset.renderedPage === state.page
+    && editing?.matches('[data-advanced-field], [data-vibe-field], [data-lora-field], [data-mask-brush]')
+    && !['checkbox', 'select-one'].includes(editing.type)) {
+    refreshGenerationStatus(); return;
+  }
+  if (!force && host.dataset.renderedPage === 'settings' && state.page === 'settings'
+    && editing?.matches('[data-backup-field="password"]')) return;
+  if (!force && host.dataset.renderedPage === 'styles' && state.page === 'styles'
+    && editing?.matches('[data-artist-field], [data-artist-search]')) return;
+  if (!force && host.dataset.renderedPage === 'tags' && state.page === 'tags'
+    && editing?.closest('[data-tag-root]')) return;
+  if (!force && host.dataset.renderedPage === 'processing' && state.page === 'processing'
+    && editing?.closest('[data-processing-root]')) return;
+  if (!force && host.dataset.renderedPage === 'batch' && state.page === 'batch'
+    && editing?.closest('[data-batch-root]')) return;
+  if (!force && host.dataset.renderedPage === state.page && ['characters', 'assistant'].includes(state.page)
+    && editing?.matches('input[data-profile-field], textarea[data-profile-field], [data-profile-outfit], input[data-participant-field], [data-assistant-character]')
+    && !['checkbox', 'select-one'].includes(editing.type)) return;
+  rendering = true;
+  try {
+  floatingMenu?.destroy();
+  floatingMenu = null;
+  const content = host.querySelector('.plugin-content');
+  const scrollTop = content?.scrollTop || 0;
+  if (host.dataset.renderedPage) pageScrolls.set(host.dataset.renderedPage, scrollTop);
+  const folds = samePage ? new Map([...host.querySelectorAll('[data-experience-fold]')].map((node) => [node.dataset.experienceFold, node.open])) : new Map();
+  setupExpanded = host.querySelector('[data-setup-readiness]')?.open ?? setupExpanded;
+  const navigation = host.querySelector('.plugin-nav');
+  const navScroll = { left: navigation?.scrollLeft || 0, top: navigation?.scrollTop || 0 };
+  assistantUI.failureOpen = host.querySelector('[data-assistant-failure]')?.open ?? assistantUI.failureOpen;
+  changelogPanel.capture(host);
+  applyTokens();
+  host.innerHTML = config.surface === 'chat' ? renderChat() : renderConsole();
+  decoratePageHeading();
+  updateConnectionStatus();
+  updateCredentialStatus();
+  host.dataset.renderedPage = state.page;
+  host.dataset.renderedSurface = config.surface;
+  host.querySelector('.plugin-content')?.scrollTo(0, samePage ? scrollTop : pageScrolls.get(state.page) || 0);
+  for (const node of host.querySelectorAll('[data-experience-fold]')) if (folds.has(node.dataset.experienceFold)) node.open = folds.get(node.dataset.experienceFold);
+  refreshSaveStatus();
+  refreshSetupSummary();
+  if (!state.enabled) {
+    host.querySelectorAll('button[data-action="generate"]').forEach((button) => {
+      button.disabled = true;
+      button.title = '插件已关闭';
+    });
+  }
+  if (state.floatingBall && config.surface === 'chat') {
+    host.insertAdjacentHTML('beforeend', `<button type="button" class="plugin-floating-ball" data-action="floating-menu" title="打开${esc(config.name)}菜单" aria-label="打开${esc(config.name)}菜单">${pluginIcon(state.characterTheme)}</button>`);
+    floatingMenu = createFloatingMenu({
+      button: host.querySelector('.plugin-floating-ball'), container: host,
+      onSettings: showSettings,
+      onHide: () => setFloatingBall(false),
+    });
+    floatingMenu.update({ characterTheme: state.characterTheme, theme: config.theme });
+  }
+  paintIcons();
+  for (const [selector, html] of [
+    ['.result-area', renderGenerationResult], ['.generation-tasks', renderTasks],
+    ['[data-page-primary]', primaryPageAction],
+  ]) {
+    const node = host.querySelector(selector);
+    if (node && state.page === 'generate') statusMarkup.set(node, html());
+  }
+  // Restore both navigation axes after icons establish the final button sizes.
+  const restoredNavigation = host.querySelector('.plugin-nav');
+  if (restoredNavigation) {
+    restoredNavigation.scrollLeft = navScroll.left;
+    restoredNavigation.scrollTop = navScroll.top;
+  }
+  refreshUpdateNavigation();
+  advancedPanel.objectInfo = comfyProbe?.objectInfo;
+  advancedPanel.bind(host);
+  backupPanel.bind(host);
+  recoveryPanel.bind(host);
+  changelogPanel.bind(host);
+  componentsPanel.bind(host);
+  debugToolsPanel.bind(host);
+  promptProcessingPanel.bind(host);
+  readerPanel.bind(host);
+  comicPanel.bind(host);
+  assistantPresetPanel.bind(host);
+  assistantWorkflowPanel.bind(host);
+  assistantSchemePanel.bind(host);
+  assistantDiagnosticPanel.bind(host);
+  assistantLintPanel.bind(host);
+  assistantHistoryPanel.bind(host);
+  assistantRecoveryPanel.bind(host);
+  assistantContextPanel.bind(host);
+  assistantScenePanel.bind(host);
+  tagPanel.bind(host);
+  workbenchPanel.bind(host);
+  attachPromptTagButtons(host, openPromptTools);
+  } finally { rendering = false; }
+}
+
+export function applyConfig(next) {
+  const previous = config;
+  config = next;
+  if ((!previous || previous.state !== next.state) && !taskQueue.running) {
+    runtimeState = next.state;
+    progress = next.state === 'generating' ? 48 : 0;
+  }
+  if (!previous || previous.surface !== next.surface || previous.state !== next.state) {
+    render();
+  } else {
+    applyTokens();
+    host.querySelectorAll('.brand-copy > strong').forEach((node) => { node.textContent = config.name; });
+    const heading = host.querySelector('.chat-image-heading > span');
+    if (heading) {
+      heading.innerHTML = renderChatBrand();
+      paintIcons();
+    }
+    const ball = host.querySelector('.plugin-floating-ball');
+    if (ball) {
+      ball.title = `打开${config.name}菜单`;
+      ball.setAttribute('aria-label', ball.title);
+    }
+    floatingMenu?.update({ characterTheme: state.characterTheme, theme: config.theme });
+  }
+}
+
+export function showSettings() {
+  if (state.page === 'reader') readerPanel.leave();
+  if (state.page === 'comic') comicPanel.leave();
+  const changedSurface = config.surface !== 'console';
+  config = { ...config, surface: 'console' };
+  state.page = 'settings';
+  persist();
+  render();
+  if (changedSurface && window.parent !== window) {
+    postWindowMessage(window.parent, { type: 'draw-lab:surface', surface: 'console' });
+  }
+}
+
+function revealActiveNavigation() {
+  const nav = host?.querySelector('.plugin-nav'), selected = nav?.querySelector('[aria-current="page"]');
+  if (!nav || !selected || nav.scrollWidth <= nav.clientWidth) return;
+  const box = nav.getBoundingClientRect(), active = selected.getBoundingClientRect();
+  if (active.left < box.left) nav.scrollLeft += active.left - box.left - 8;
+  else if (active.right > box.right) nav.scrollLeft += active.right - box.right + 8;
+}
+window.addEventListener('resize', () => requestAnimationFrame(revealActiveNavigation));
+
+export function showPage(page) {
+  if (page === 'updates') {
+    releasePanel.open = true;
+    showPage('changelog');
+    host?.querySelector('[data-release-fold]')?.scrollIntoView({ block: 'start' });
+    return;
+  }
+  if (!['settings', 'generate', 'batch', 'gallery', 'assistant', 'comic', 'reader', 'characters', 'styles', 'tags', 'processing', 'connection', 'components', 'debug', 'changelog'].includes(page)) return;
+  if (state.page === 'reader' && page !== 'reader') readerPanel.leave();
+  if (state.page === 'comic' && page !== 'comic') comicPanel.leave();
+  if (page === 'changelog' && releasePanel.hasUpdate) releasePanel.open = true;
+  state.page = page;
+  persist(); render(page === 'assistant'); revealActiveNavigation();
+  if (page === 'assistant' && assistantPresetPanel.ui.loaded && isInstalled()) void assistantPresetPanel.refresh();
+  if (page === 'assistant' && state.assistant.source === 'tavern' && isInstalled()) void fetchAssistantModels(false);
+  if (page === 'characters') void refreshProfileCards();
+  if (page === 'gallery') void Promise.resolve(libraryReady).then(() => reloadDrawings()).catch((error) => { drawingUI.error = error.message; render(); });
+}
+
+export function setFloatingBall(visible) {
+  if (typeof visible !== 'boolean' || state.floatingBall === visible) return;
+  state.floatingBall = visible;
+  persist();
+  render();
+}
+
+export function applyHostContext(chat) {
+  if (!isInstalled()) return;
+  const changed = currentChat().key !== chat?.key;
+  window.__LINGHUASHI_ENV__.chat = chat;
+  if (changed) {
+    readerPanel.reset();
+    assistantContextPanel.reset();
+    assistantWorkflowPanel.resetState();
+    profileAI.invalidate();
+    useLiveCharacterScene();
+    if (profileUI.scope === 'chat' && !profileUI.dirty) loadProfileDraft();
+    if (state.page === 'characters') void refreshProfileCards();
+  }
+  if (changed) render(true);
+  else refreshBackgroundStatus();
+}
+
+function toast(message) {
+  const root = document.getElementById('toast-root');
+  root.innerHTML = `<div class="ui-toast">${icon('circle-check')}<span>${esc(message)}</span></div>`;
+  paintIcons();
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => root.replaceChildren(), 2200);
+}
+
+let galleryIndexTimer;
+async function reloadDrawings(refresh = false) {
+  clearTimeout(galleryIndexTimer);
+  const load = async () => {
+    const location = state.cacheLocation;
+    const rows = await drawingLibrary.list(location, refresh);
+    if (location !== state.cacheLocation) return;
+    const existingIds = new Set(rows.map((row) => row.id));
+    state.drawingReviews = normalizeReviews(Object.fromEntries(Object.entries(state.drawingReviews)
+      .filter(([key]) => !key.startsWith(`${location}:`) || existingIds.has(key.slice(location.length + 1)))));
+    const next = hydrateDrawings(rows, drawings).map((row) => ({ ...row, rating: reviewValue(state.drawingReviews, location, row.id) })).sort((left, right) => right.createdAt - left.createdAt);
+    const previous = drawings;
+    const contentSignature = (items) => JSON.stringify(items.map((row) => [
+      row.id, row.title, row.favorite, row.rating, row.width, row.height, row.version,
+      row.createdAt, row.blob?.size, row.thumbnail?.size, row.snapshot,
+    ]));
+    const changed = contentSignature(previous) !== contentSignature(next) || drawingUI.loading || Boolean(drawingUI.error);
+    const selectedGroups = new Set(previous.filter((row) => drawingUI.selection.has(row.id)).map(versionGroupId));
+    drawings = next;
+    state.history = drawings.map((item) => item.id);
+    state.favorites = drawings.filter((item) => item.favorite).map((item) => item.id);
+    state.storageUsage = formatBytes(rows.reduce((sum, item) => sum + item.blob.size + item.thumbnail.size, 0));
+    drawingUI.storageLocation = location;
+    drawingUI.index = location === 'server' ? drawingLibrary.server.stats?.index : null;
+    state.storageStatus = location === 'server' ? drawingLibrary.server.stats?.enhanced
+      ? '已连接 · 当前酒馆账号 · 服务器增强可用' : '已连接 · 当前酒馆账号 · 内置存储' : '';
+    if (location === 'server' && drawingLibrary.server.stats?.pendingFiles) {
+      state.storageStatus = `${drawingLibrary.server.stats.pendingFiles} 张图片的磁盘文件待清理，可点击检查存储`;
+    }
+    drawingUI.selection = new Set(drawingGroups(drawings).filter((row) => selectedGroups.has(versionGroupId(row))).map((row) => row.id));
+    drawingUI.page = drawingPage(filterDrawings(drawings, drawingUI.filters), drawingUI.page, drawingUI.pageSize).page;
+    if (!activeDrawing()) activeDrawingId = drawings[0]?.id || null;
+    persist();
+    drawingUI.loading = false;
+    drawingUI.error = '';
+    const editingGallery = state.page === 'gallery' && document.activeElement?.closest('[data-drawing-filters]');
+    if (state.page === 'gallery' && !editingGallery && changed) render();
+    else {
+      refreshBackgroundStatus();
+      const status = host.querySelector('[data-gallery-index-status]');
+      if (status) status.textContent = galleryIndexStatus(drawingUI.index);
+    }
+    if (changed && document.querySelector('.drawing-viewer')) {
+      viewerUI.ids = viewerUI.ids.filter((id) => currentDrawing(drawings, id));
+      viewerUI.index = Math.min(viewerUI.index, viewerUI.ids.length - 1);
+      if (viewerUI.ids.length) showDrawingViewer();
+      else closeDrawingViewer();
+    }
+    revokeDrawings(previous, drawings);
+    if (state.page === 'gallery' && location === 'server' && drawingUI.index?.pending && !drawingUI.index.errors) {
+      galleryIndexTimer = setTimeout(() => {
+        if (state.page !== 'gallery' || state.cacheLocation !== 'server') return;
+        if (document.activeElement?.closest('[data-drawing-filters]') || drawingUI.busy) return;
+        void reloadDrawings().catch((error) => { drawingUI.error = error.message; render(); });
+      }, 2000);
+    }
+  };
+  libraryReload = (libraryReload || Promise.resolve()).catch(() => {}).then(load);
+  return libraryReload;
+}
+
+async function initializeDrawings() {
+  try {
+    await drawingLibrary.open();
+    writeBrowserCache(CLEANUP_STORAGE, String(lastCleanup));
+    if (!await drawingLibrary.hasSeed()) {
+      const rows = [];
+      for (const [index, sample] of (isInstalled() ? [] : samples).entries()) {
+        if (!state.history.includes(sample.id)) continue;
+        const response = await fetch(sample.src);
+        if (!response.ok) throw new Error('示例图片未加载，请刷新重试');
+        const snapshot = index === 0
+          ? captureSnapshot({ provider: 'novelai', novelai: { ...NOVELAI_DEFAULTS, positive: sample.prompt, width: 1216, height: 832, seed: 8566257 } })
+          : captureSnapshot({ provider: 'comfyui', comfyui: newComfyConfig(undefined, '示例风景工作流') });
+        if (snapshot.provider === 'comfyui') Object.assign(snapshot.config.params, { positive: sample.prompt, width: 1216, height: 832, seed: 542123 });
+        rows.push(await makeDrawing(await response.blob(), { id: `demo-${sample.id}`, title: sample.title, snapshot, createdAt: Date.now() - index * 3600000, favorite: state.favorites.includes(sample.id), demo: true }));
+      }
+      await drawingLibrary.seed(rows);
+    }
+    if (state.cacheLocation === 'server') await syncStoragePolicy();
+    await reloadDrawings();
+    await cleanupDrawings();
+    setInterval(() => { void cleanupDrawings(); }, 60000);
+    return true;
+  } catch (error) {
+    drawingUI.loading = false;
+    drawingUI.error = `图片存储无法读取：${error.message}`;
+    render();
+    return false;
+  }
+}
+
+async function cleanupDrawings() {
+  if (cleanupBusy || !drawingLibrary.db || !state.enabled || backupPanel.ui.busy) return;
+  cleanupBusy = true;
+  try {
+    if (state.cacheLocation === 'server') await syncStoragePolicy();
+    const plan = await drawingLibrary.cleanup(state, lastCleanup);
+    if (plan.due) {
+      lastCleanup = Date.now();
+      writeBrowserCache(CLEANUP_STORAGE, String(lastCleanup));
+    }
+    if (plan.ids.length) {
+      await reloadDrawings();
+      toast(`已自动清理 ${plan.ids.length} 张未收藏图片`);
+    }
+  } catch {
+    toast(`自动清理失败，请检查${state.cacheLocation === 'server' ? '酒馆服务器' : '浏览器'}图片存储`);
+  } finally { cleanupBusy = false; }
+}
+
+function syncStoragePolicy() {
+  if (!isInstalled() || (state.cacheLocation !== 'server' && !serverPolicySignature)) return Promise.resolve();
+  const settings = { enabled: state.enabled, cacheLocation: state.cacheLocation, cleanupMode: state.cleanupMode,
+    cleanupInterval: state.cleanupInterval, cleanupUnit: state.cleanupUnit,
+    cleanupMaxImages: state.cleanupMaxImages, cleanupOlderThanDays: state.cleanupOlderThanDays };
+  const serialized = JSON.stringify(settings);
+  serverPolicyWork = serverPolicyWork.catch(() => {}).then(async () => {
+    if (serverPolicySignature === serialized) return;
+    await drawingLibrary.syncPolicy(settings);
+    serverPolicySignature = serialized;
+  });
+  return serverPolicyWork;
+}
+
+async function switchImageStorage(location) {
+  if (location === state.cacheLocation || drawingUI.busy) return;
+  await drawingOperation(async () => {
+    if (location === 'server') await drawingLibrary.list('server');
+    const previous = state.cacheLocation;
+    state.cacheLocation = location;
+    try {
+      await syncStoragePolicy();
+      drawingUI.filters = { source: 'all', start: '', end: '', search: '', favoriteOnly: false };
+      drawingUI.selection.clear(); drawingUI.page = 1;
+      await reloadDrawings();
+      persist();
+      toast(`图片存储已切换为${location === 'server' ? '酒馆服务器' : '浏览器'}`);
+    } catch (error) {
+      state.cacheLocation = previous;
+      persist();
+      await reloadDrawings().catch(() => {});
+      throw error;
+    }
+  });
+}
+
+async function migrateBrowserImages() {
+  await drawingOperation(async () => {
+    const rows = (await drawingLibrary.list('browser')).filter((row) => !row.demo);
+    if (!rows.length) { toast('当前浏览器没有可迁移的图片'); return; }
+    if (!window.confirm(`将 ${rows.length} 张浏览器图片和参数复制到当前酒馆账号。原浏览器图片保留；再次迁移会跳过已保存的图片。继续吗？`)) return;
+    let completed = 0;
+    for (const row of rows) {
+      try {
+        await drawingLibrary.add([row], 'server');
+        const rating = reviewValue(state.drawingReviews, 'browser', row.id);
+        if (rating !== 'unrated') state.drawingReviews = setReview(state.drawingReviews, 'server', row.id, rating);
+        completed++;
+      }
+      catch (error) {
+        await reloadDrawings();
+        throw new Error(`已迁移 ${completed}/${rows.length} 张；${error.message}。可再次点击迁移继续`);
+      }
+    }
+    await reloadDrawings();
+    toast(`已迁移 ${completed} 张图片，浏览器原图已保留`);
+  });
+}
+
+async function drawingOperation(operation) {
+  if (drawingUI.busy) return;
+  if (!await libraryReady && !drawingLibrary.db) { toast('图片存储尚未就绪，请刷新页面重试'); return; }
+  drawingUI.busy = true; drawingUI.error = ''; render();
+  try { await operation(); }
+  catch (error) {
+    drawingUI.error = error.name === 'QuotaExceededError' ? '浏览器存储空间不足，请先导出并清理图片' : error.message;
+    toast(drawingUI.error);
+  } finally { drawingUI.busy = false; render(); }
+}
+
+function drawingTargets() {
+  const selected = drawingUI.selection.size ? drawings.filter((item) => drawingUI.selection.has(item.id)) : filterDrawings(drawings, drawingUI.filters);
+  const groups = new Set(selected.map(versionGroupId));
+  return drawings.filter((item) => groups.has(versionGroupId(item)));
+}
+
+function importDrawingFiles() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.png,.jpg,.jpeg,.webp,.zip'; input.multiple = true;
+  input.addEventListener('change', () => {
+    const files = [...input.files];
+    if (!files.length) return;
+    drawingOperation(async () => {
+      if (files.length > 500) throw new Error('一次最多导入 500 个文件');
+      if (files.reduce((sum, file) => sum + file.size, 0) > 200 * 1024 * 1024) throw new Error('一次导入的文件总量需在 200 MB 以内');
+      const rows = [];
+      let duplicate = 0;
+      const ids = new Set(drawings.map((item) => item.id));
+      for (const file of files) {
+        const imported = /\.zip$/i.test(file.name) ? await importArchive(file) : [await makeDrawing(file, { title: file.name.replace(/\.[^.]+$/, '') })];
+        for (const item of imported) {
+          if (ids.has(item.id)) { duplicate++; continue; }
+          ids.add(item.id); rows.push(item);
+          const maximum = state.cacheLocation === 'server' ? 10000 : 500;
+          if (rows.length + drawings.length > maximum) throw new Error(`最多保存 ${maximum} 张图片，请先导出并清理一些图片`);
+        }
+      }
+      if (rows.length) {
+        await drawingLibrary.add(rows);
+        for (const row of rows) if (row.rating && row.rating !== 'unrated') state.drawingReviews = setReview(state.drawingReviews, state.cacheLocation, row.id, row.rating);
+        persist();
+      }
+      const warnings = rows.filter((item) => item.warning);
+      drawingUI.page = 1;
+      drawingUI.filters = { source: 'all', start: '', end: '', search: '', favoriteOnly: false };
+      await reloadDrawings();
+      toast(`已导入 ${rows.length} 张图片${duplicate ? `，跳过 ${duplicate} 张重复记录` : ''}${warnings.length ? `；${warnings.length} 张图片的参数无法读取` : ''}`);
+    });
+  });
+  input.click();
+}
+
+function deleteDrawingsDialog(ids, title = '删除图片') {
+  if (!ids.length || drawingUI.busy) return;
+  const overlay = document.getElementById('overlay-root');
+  const location = state.cacheLocation;
+  const referenced = drawings.filter((item) => ids.includes(item.id) && item.chatBinding).length;
+  overlay.innerHTML = `<dialog class="nai-preset-dialog" aria-labelledby="drawing-delete-title"><form>
+    <header><h2 id="drawing-delete-title">${title}</h2>${iconButton('x', '关闭', 'drawing-close-delete')}</header>
+    <p>将从${location === 'server' ? '酒馆服务器' : '浏览器'}删除 ${ids.length} 张图片及对应参数记录。</p>
+    ${referenced ? `<p>包含 ${referenced} 个聊天图片版本。剩余版本会继续显示；整个图组删除后，该位置的图片将无法显示。</p>` : ''}
+    <footer>${button('x', '取消', 'drawing-close-delete', 'secondary')}<button type="submit" class="ui-button drawing-delete">${icon('trash-2')}<span>删除 ${ids.length} 张</span></button></footer>
+    </form></dialog>`;
+  const dialog = overlay.querySelector('dialog');
+  dialog.querySelectorAll('[data-action="drawing-close-delete"]').forEach((node) => node.addEventListener('click', () => dialog.close()));
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  dialog.querySelector('form').addEventListener('submit', (event) => {
+    event.preventDefault(); dialog.close();
+    drawingOperation(async () => {
+      if (state.cacheLocation !== location) throw new Error('存储位置已变化，请重新选择图片');
+      const result = await drawingLibrary.remove(ids, referenced > 0);
+      await reloadDrawings();
+      notifyImagesChanged();
+      toast(`已删除 ${ids.length} 张图片${result?.pendingFiles ? '，磁盘文件将在清理任务中重试删除' : ''}`);
+    });
+  });
+  paintIcons(); dialog.showModal();
+}
+
+function closeDrawingViewer() {
+  document.getElementById('overlay-root').replaceChildren();
+  host.querySelector(`[data-action="viewer"][data-image="${viewerUI.imageId}"]`)?.focus({ preventScroll: true });
+}
+
+function markReviewed(rating, undo = false) {
+  const item = viewedDrawing();
+  if (!item || drawingUI.busy) return;
+  const entry = undo ? viewerUI.reviewHistory.at(-1) : { id: item.id, location: state.cacheLocation, before: item.rating || 'unrated' };
+  if (!entry || entry.location !== state.cacheLocation) return;
+  const previous = state.drawingReviews;
+  try {
+    state.drawingReviews = setReview(previous, entry.location, entry.id, undo ? entry.before : rating);
+    persist();
+    for (const row of drawings) row.rating = reviewValue(state.drawingReviews, state.cacheLocation, row.id);
+    if (undo) {
+      viewerUI.reviewHistory.pop();
+      const index = viewerUI.ids.findIndex((id) => groupVersions(drawings, id).some((row) => row.id === entry.id));
+      if (index >= 0) viewerUI.index = index;
+      viewerUI.imageId = entry.id;
+    } else {
+      viewerUI.reviewHistory.push(entry);
+      if (viewerUI.reviewHistory.length > 100) viewerUI.reviewHistory.shift();
+      if (viewerUI.review && viewerUI.index < viewerUI.ids.length - 1) { viewerUI.index++; viewerUI.imageId = ''; }
+    }
+    render(); showDrawingViewer();
+  } catch (error) { state.drawingReviews = previous; toast(error.message); }
+}
+
+function viewedDrawing() {
+  const versions = groupVersions(drawings, viewerUI.ids[viewerUI.index]);
+  return versions.find((row) => row.id === viewerUI.imageId) || currentDrawing(versions, viewerUI.ids[viewerUI.index]);
+}
+
+function showDrawingViewer() {
+  const item = viewedDrawing();
+  if (!item) return;
+  viewerUI.imageId = item.id;
+  viewerUI.versions = groupVersions(drawings, item.id);
+  viewerUI.currentId = currentDrawing(drawings, item.id)?.id;
+  viewerUI.seed = drawingSeed(item);
+  if (!viewerUI.versions.some((row) => row.id === viewerUI.compareId && row.id !== item.id)) {
+    viewerUI.compareId = viewerUI.versions.find((row) => row.id !== item.id)?.id || '';
+  }
+  const overlay = document.getElementById('overlay-root');
+  const snapshot = captureSnapshot(state), params = snapshot.params || snapshot.config.params;
+  const caps = modelCapabilities(snapshot.provider, params.model, advancedOf(snapshot));
+  overlay.innerHTML = renderDrawingViewer(item, viewerUI.index, viewerUI.ids.length, { ...viewerUI,
+    sourceEnabled: Boolean(caps.image), referenceEnabled: snapshot.provider === 'novelai'
+      ? Boolean(caps.vibe || caps.character) : snapshot.provider === 'openai' && Boolean(caps.image) });
+  const dialog = overlay.querySelector('dialog');
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  paintIcons(); dialog.showModal();
+}
+
+function restoreViewerParameters() {
+  const item = viewedDrawing();
+  if (!item?.snapshot) return;
+  const previous = { provider: state.provider, novelai: state.novelai, comfyui: state.comfyui, openai: state.openai, sdwebui: state.sdwebui,
+    characterSceneOverride: state.characterSceneOverride, characterSceneOverrideProvider: state.characterSceneOverrideProvider };
+  try {
+    const message = restoreSnapshot(state, item.snapshot);
+    persist();
+    resetConnection({ keepOpenAIModels: previous.provider === 'openai' && state.provider === 'openai' });
+    activeDrawingId = item.id;
+    state.page = 'connection';
+    persist(); closeDrawingViewer();
+    config = { ...config, surface: 'console' };
+    render();
+    if (window.parent !== window) postWindowMessage(window.parent, { type: 'draw-lab:surface', surface: 'console' });
+    toast(message);
+  } catch (error) { Object.assign(state, previous); toast(error.message); }
+}
+
+function notifyImagesChanged() {
+  chatPost('linghuashi:images-changed', {});
+  if (typeof BroadcastChannel !== 'undefined') {
+    const channel = new BroadcastChannel(`linghuashi-chat:${currentAccount()}`);
+    channel.postMessage({ type: 'images-changed' });
+    channel.close();
+  }
+}
+
+function closeImageEditor() {
+  tagPanel.close();
+  imageEditorUI?.controller?.abort();
+  imageEditorUI = null;
+  document.getElementById('overlay-root').replaceChildren();
+}
+
+function openImageEditor(item) {
+  try {
+    editorAdvancedPanel.resetMask();
+    imageEditorUI = { id: item.id, location: state.cacheLocation, draft: imageEditDraft(item.snapshot),
+      note: '', instruction: '', error: '', busy: false, submitting: false, advanced: false };
+    showImageEditor();
+  } catch (error) { imageEditorUI = null; toast(error.message); }
+}
+
+async function attachEditorSource(mode) {
+  const ui = imageEditorUI;
+  if (!ui) return;
+  if (!imageEditAvailability(ui.draft)[mode]) {
+    ui.error = '当前模型或接口未开放此图片编辑能力，请先选择支持的接口和模型'; showImageEditor(); return;
+  }
+  await editorAdvancedPanel.perform(async () => {
+    await editorAdvancedPanel.attach('source', await materializeReferenceDrawing(ui.id));
+    if (imageEditorUI !== ui) return;
+    const draftAdvanced = advancedOf(ui.draft);
+    draftAdvanced.mode = mode;
+    if (ui.draft.provider === 'comfyui') ui.draft.config.advanced = draftAdvanced;
+    else ui.draft.params.advanced = draftAdvanced;
+  });
+}
+
+async function enqueueProcessing(draft, item, storageLocation) {
+  if (state.cacheLocation !== storageLocation) throw new Error('存储位置已变化，请重新打开原图');
+  if (!state.enabled || backupPanel.ui.restoring) throw new Error('请启用插件并完成配置恢复');
+  const service = resolveNovelAIService(credentials.novelai.key, credentials.novelai.endpoint);
+  if (!credentials.novelai.key.trim()) throw new Error('请先在接口配置填写 NovelAI 秘钥');
+  if (service.kind !== 'identify' && service.kind !== 'resolved') throw new Error(service.message);
+  if (service.id !== 'official' && !draft.allowThirdParty) throw new Error('请先勾选尝试当前第三方接口');
+  const dimensions = validateProcessingDraft(draft, item);
+  const parent = drawings.find((row) => row.id === item.id);
+  if (!parent) throw new Error('来源图片已删除，请刷新图库');
+  const materialized = await drawingLibrary.materialize(parent);
+  const prepared = await prepareProcessingSource(materialized.blob, dimensions);
+  if (state.cacheLocation !== storageLocation || !drawings.some((row) => row.id === item.id)) throw new Error('原图或存储位置已变化，请重新打开');
+  const asset = await referenceAssets.put(prepared.blob, { ...prepared, name: parent.title }, storageLocation);
+  const snapshot = processingSnapshot(draft, asset, item);
+  const relation = editRelation(parent, processingTitle(snapshot.novelaiProcessing));
+  relation.number = Math.max(...groupVersions(drawings, parent.id).map((row) => row.version?.number || 1)) + 1;
+  const job = await enqueueGeneration(undefined, undefined, { snapshot, relation, storageLocation, chatBinding: parent.chatBinding });
+  if (!job) throw new Error('未能加入图片处理任务，请检查插件开关和接口配置');
+  toast('已加入图片处理任务，完成后保存为新版本');
+}
+
+async function materializeReferenceDrawing(id) {
+  const row = drawings.find((item) => item.id === id);
+  if (!row) throw new Error('图片已删除，请刷新绘图管理');
+  const materialized = await drawingLibrary.materialize(row);
+  const normalized = await normalizeReferenceImage(materialized.blob);
+  normalized.name = row.title;
+  return normalized;
+}
+
+async function saveLocalToolsResult(result, source) {
+  if (!result?.blob || source.location !== state.cacheLocation) throw new Error('存储位置已变化，请重新选择原图');
+  if (backupPanel.ui.restoring) throw new Error('请等待备份恢复完成');
+  await libraryReady;
+  // Read the current version list so a parallel edit cannot reuse an old version number.
+  const rows = await drawingLibrary.list(source.location);
+  const parent = source.id ? rows.find((item) => item.id === source.id) : null;
+  if (source.id && !parent) throw new Error('来源图片已删除，请先下载结果再重新导入');
+  const note = `${result.model === 'fsrcnn-x4' ? 'FSRCNN 4×' : 'FSRCNN 2×'} 本地超分 · ${result.width} × ${result.height}`;
+  const relation = parent ? editRelation(parent, note) : null;
+  if (relation) relation.number = Math.max(...groupVersions(rows, parent.id).map((item) => item.version?.number || 1)) + 1;
+  const item = await makeDrawing(result.blob, {
+    title: `${source.title} · 本地超分`, snapshot: parent?.snapshot || null,
+    favorite: Boolean(parent?.favorite), chatBinding: parent?.chatBinding || null,
+    ...(relation ? { version: relation } : {}),
+  });
+  if (state.cacheLocation !== source.location) throw new Error('存储位置已变化，请重新选择原图');
+  await drawingLibrary.add([item], source.location);
+  activeDrawingId = item.id; await reloadDrawings(); notifyImagesChanged();
+}
+
+async function encodeCurrentVibe(entry, model) {
+  const credential = credentials.novelai;
+  if (!state.enabled || !credential.key.trim()) throw new Error('请启用插件并配置 NovelAI 秘钥');
+  let service = resolveNovelAIService(credential.key, credential.endpoint);
+  if (service.kind === 'identify') service = await identifySkService(credential.key, { signal: AbortSignal.timeout(12000) });
+  if (service.kind !== 'resolved') throw new Error(service.message);
+  const image = assetBase64(new Uint8Array(await (await referenceAssets.get(entry.image)).arrayBuffer()));
+  return encodeVibe({ endpoint: service.endpoint, key: credential.key, model, image, information: entry.information,
+    signal: AbortSignal.timeout(120000) });
+}
+
+async function useViewerReference(kind) {
+  const row = viewedDrawing();
+  if (!row) return;
+  try {
+    const current = captureSnapshot(state), params = current.params || current.config.params;
+    const caps = modelCapabilities(current.provider, params.model, advancedOf(current));
+    if (kind === 'source' ? !caps.image : current.provider === 'novelai' ? !caps.vibe && !caps.character
+      : current.provider !== 'openai' || !caps.image) {
+      throw new Error('当前模型或接口未开放此参考能力，请在接口配置选择支持的接口和模型');
+    }
+    const image = await materializeReferenceDrawing(row.id);
+    closeDrawingViewer();
+    const snapshot = captureSnapshot(state), advanced = advancedOf(snapshot);
+    advanced.mode = kind === 'source' ? 'image' : 'reference';
+    if (['comfyui', 'sdwebui'].includes(snapshot.provider) && kind !== 'source') throw new Error('当前模式请使用图生图或局部重绘');
+    if (snapshot.provider === 'novelai' && kind !== 'source') advanced.referenceKind = 'vibe';
+    if (snapshot.provider === 'comfyui') state.comfyui.advanced = advanced;
+    else state[snapshot.provider].advanced = advanced;
+    await advancedPanel.attach(kind === 'source' ? 'source' : snapshot.provider === 'novelai' ? 'vibe' : 'reference', image);
+    persist(); showPage('generate');
+  } catch (error) { toast(error.message); }
+}
+
+function showImageEditor() {
+  if (renderingEditor) return;
+  const ui = imageEditorUI, item = drawings.find((row) => row.id === ui?.id);
+  if (!ui || !item) { closeImageEditor(); return; }
+  renderingEditor = true;
+  try {
+  const overlay = document.getElementById('overlay-root');
+  const scrollTop = overlay.querySelector('.image-editor-body')?.scrollTop || 0;
+  overlay.innerHTML = renderImageEditor(item, ui, editorAdvancedPanel.html());
+  const dialog = overlay.querySelector('dialog');
+  dialog.addEventListener('cancel', (event) => { event.preventDefault(); closeImageEditor(); });
+  const params = () => ui.draft.params || ui.draft.config.params;
+  const single = dialog.querySelector('[data-nai="nSamples"], [data-openai="n"], [data-comfy="batch"], [data-sdwebui="batch"]');
+  if (single) { single.value = '1'; single.disabled = true; }
+  const negative = dialog.querySelector('[data-openai-negative-field]');
+  if (negative && isOpenAINovelAI(params().model)) {
+    negative.hidden = false; negative.querySelector('textarea').disabled = ui.busy || ui.submitting;
+  }
+  dialog.addEventListener('input', (event) => {
+    const target = event.target, key = target.dataset.nai || target.dataset.openai || target.dataset.comfy || target.dataset.sdwebui;
+    if (key) params()[key] = target.type === 'checkbox' ? target.checked : target.type === 'number' ? Number(target.value) : target.value;
+    if (target.hasAttribute('data-image-edit-instruction')) ui.instruction = target.value;
+    if (target.hasAttribute('data-image-edit-note')) ui.note = target.value;
+    if (target.dataset.imageEditRole !== undefined) {
+      const role = ui.draft.characterScene.characterPrompts[Number(target.dataset.imageEditRole)];
+      role[target.dataset.roleField] = target.value;
+    }
+  });
+  dialog.addEventListener('change', (event) => {
+    const target = event.target;
+    if (target.hasAttribute('data-nai-size') && target.value !== 'custom') {
+      const size = NOVELAI_SIZES.find((row) => row.id === target.value);
+      Object.assign(params(), { width: size.width, height: size.height });
+      showImageEditor();
+    } else if (['model', 'size', 'parameterMode', 'outputFormat', 'sm'].includes(target.dataset.nai || target.dataset.openai)) {
+      ui.draft = normalizeSnapshot(ui.draft); showImageEditor();
+    }
+  });
+  dialog.querySelectorAll('details').forEach((node) => node.addEventListener('toggle', () => { ui.advanced = node.open; }));
+  dialog.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (action === 'image-edit-close') closeImageEditor();
+    else if (action === 'image-edit-reset') { ui.draft = imageEditDraft(item.snapshot); ui.error = ''; showImageEditor(); }
+    else if (action === 'image-edit-cancel') ui.controller?.abort();
+    else if (action === 'image-edit-rewrite') void rewriteImage();
+    else if (action === 'image-edit-generate') void generateImageVersion();
+    else if (action === 'image-edit-enhance') processingPanel.open(item);
+    else if (action === 'image-edit-source' || action === 'image-edit-inpaint') {
+      void attachEditorSource(action === 'image-edit-inpaint' ? 'inpaint' : 'image');
+    }
+    else if (['nai-swap-size', 'openai-swap-size', 'sdwebui-swap-size'].includes(action)) {
+      [params().width, params().height] = [params().height, params().width]; showImageEditor();
+    } else if (action === 'sdwebui-insert-lora') {
+      try {
+        const token = loraPrompt(dialog.querySelector('[data-sdwebui-lora]').value, Number(dialog.querySelector('[data-sdwebui-lora-weight]').value));
+        if (params().positive.length + token.length + 2 > 12000) throw new Error('正向提示词超过 12000 字符');
+        params().positive = [params().positive.trim(), token].filter(Boolean).join(', '); showImageEditor();
+      } catch (error) { toast(error.message); }
+    } else if (['nai-random-seed', 'comfy-random-seed'].includes(action)) {
+      params().seed = crypto.getRandomValues(new Uint32Array(1))[0]; showImageEditor();
+    }
+  });
+  editorAdvancedPanel.objectInfo = comfyProbe?.objectInfo;
+  editorAdvancedPanel.bind(overlay);
+  if (!ui.busy && !ui.submitting) attachPromptTagButtons(dialog, (target, input, visual = false) => {
+    const roleIndex = input.dataset.imageEditRole;
+    const role = roleIndex !== undefined ? ui.draft.characterScene.characterPrompts[Number(roleIndex)] : null;
+    tagPanel.open({
+      target, visual, label: role ? `${role.name} · 本图角色` : '单图编辑草稿',
+      getContext: () => ({ provider: role ? 'novelai' : ui.draft.provider,
+        params: role ? { ...role, model: params().model } : params(), mapping: ui.draft.config?.mapping,
+        allowedTargets: role ? ['positive', 'negative'] : undefined,
+        limits: role ? { positive: 12000, negative: 4000 } : undefined }),
+      getPreview: (edits) => {
+        const snapshot = structuredClone(ui.draft);
+        if (role) Object.assign(snapshot.characterScene.characterPrompts[Number(roleIndex)], edits);
+        return visualPromptPreview(snapshot, role ? {} : edits);
+      },
+      insert: (next, field) => {
+        if (imageEditorUI !== ui || ui.busy || ui.submitting) throw new Error('当前图片草稿已关闭或正在处理');
+        if (role) for (const key of Array.isArray(field) ? field : [field]) role[key] = next[key];
+        else if (ui.draft.provider === 'comfyui') ui.draft.config.params = next;
+        else ui.draft.params = next;
+        input.value = next[target];
+      },
+      closed: () => { if (imageEditorUI === ui) showImageEditor(); },
+    });
+  });
+  paintIcons(); dialog.showModal();
+  dialog.querySelector('.image-editor-body').scrollTop = scrollTop;
+  } finally { renderingEditor = false; }
+}
+
+async function rewriteImage() {
+  const ui = imageEditorUI;
+  if (!ui || ui.busy || ui.submitting) return;
+  const controller = new AbortController();
+  ui.busy = true; ui.error = ''; ui.controller = controller;
+  const draft = structuredClone(ui.draft), instruction = ui.instruction;
+  showImageEditor();
+  const trace = assistantDiagnosticPanel.start('edit', normalizeAssistant(state.assistant));
+  try {
+    if (!state.enabled) throw new Error('插件已关闭');
+    await saveAssistantKey();
+    const options = normalizeAssistant(state.assistant);
+    const identity = JSON.stringify(options);
+    const messages = await prepareUtilityMessages(imageEditMessages(draft, instruction, options), 'edit', options, controller.signal, trace);
+    const raw = await executeAssistantText(messages, options, controller.signal, trace);
+    trace.step('parse');
+    const plan = parseAssistantResult(raw);
+    controller.signal.throwIfAborted();
+    if (identity !== JSON.stringify(normalizeAssistant(state.assistant))) throw new Error('文字模型配置已改变，请重新改写');
+    if (imageEditorUI === ui) {
+      ui.draft = applyImageRewrite(draft, plan);
+      if (!ui.note) ui.note = instruction.slice(0, 1000);
+    }
+    trace.finish(null, 1);
+  } catch (error) { trace.finish(controller.signal.aborted ? new Error('操作已取消') : error); ui.error = controller.signal.aborted ? '处理已取消，原参数已保留' : error.message; }
+  finally { ui.busy = false; ui.controller = null; if (imageEditorUI === ui) showImageEditor(); }
+}
+
+async function generateImageVersion() {
+  const ui = imageEditorUI;
+  if (!ui || ui.busy || ui.submitting) return;
+  ui.error = '';
+  try {
+    await editorAdvancedPanel.beforeGenerate();
+    ui.submitting = true; showImageEditor();
+    if (state.cacheLocation !== ui.location) throw new Error('存储位置已变化，请重新打开原图');
+    const parent = drawings.find((row) => row.id === ui.id);
+    if (!parent) throw new Error('来源图片已删除，请刷新图库');
+    const snapshot = prepareImageEdit(ui.draft);
+    const relation = editRelation(parent, ui.note);
+    relation.number = Math.max(...groupVersions(drawings, parent.id).map((row) => row.version?.number || 1)) + 1;
+    const job = await enqueueGeneration(undefined, undefined, { snapshot, relation,
+      chatBinding: parent.chatBinding, storageLocation: ui.location });
+    if (!job) throw new Error('未能加入重绘任务，请检查接口配置或插件开关');
+    closeImageEditor();
+    toast('已加入重绘任务，完成后保存为新版本');
+  } catch (error) { ui.error = error.message; }
+  finally { ui.submitting = false; if (imageEditorUI === ui) showImageEditor(); }
+}
+
+async function toggleDrawingFavorite(imageId) {
+  const item = drawings.find((row) => row.id === (imageId || activeDrawingId));
+  if (!item) { toast('请先将图片保存到绘图管理'); return; }
+  await drawingOperation(async () => {
+    await drawingLibrary.setFavorite(item.id, !item.favorite);
+    await reloadDrawings();
+    toast(item.favorite ? '已取消收藏' : '已加入收藏');
+  });
+}
+
+function openAIIdentity() {
+  return JSON.stringify([state.openaiEndpoint.trim(), state.openaiPath.trim(), state.openai.model.trim(), credentials.openai.key.trim()]);
+}
+
+function openAIGenerationVerified() {
+  return generationVerified !== null && generationVerified === openAIIdentity();
+}
+
+async function prepareGenerationPlan(snapshot, credential, connection, imageEdit) {
+  if (!snapshot.novelaiProcessing) {
+    snapshot = prepareCreation(snapshot, {
+      profiles: effectiveProfiles(state.characterProfiles, snapshot.characterScene?.chatKey || currentChat().key),
+      processing: state.promptProcessing, tagLibrary: state.tagLibrary,
+    });
+  }
+  const provider = snapshot.provider;
+  const params = snapshot.params || snapshot.config.params;
+  const limit = characterLimit(provider, params.model);
+  if (snapshot.characterScene?.entries.length > limit) throw new GenerationError(`当前模型最多支持 ${limit} 个角色，请减少本图出场人数`);
+  let body, url, base, outputNode;
+  const headers = {};
+  const advanced = snapshot.novelaiProcessing ? { mode: 'text' } : validateAdvanced(snapshot);
+  if (provider === 'novelai') {
+    if (!credential.key.trim()) throw new GenerationError('请先在接口配置填写 NovelAI 秘钥');
+    let service = resolveNovelAIService(credential.key, credential.endpoint);
+    if (service.kind === 'identify') {
+      service = { kind: 'resolved', ...await identifySkService(credential.key, { signal: AbortSignal.timeout(12000) }) };
+    } else if (service.kind !== 'resolved') throw new GenerationError(service.message);
+    if (snapshot.novelaiProcessing) {
+      const processing = buildProcessingRequest(snapshot);
+      url = `${processingEndpoint(service, snapshot.novelaiProcessing)}${processing.path}`;
+      body = processing.body;
+    } else {
+      url = `${service.endpoint}/ai/generate-image`;
+      body = buildNovelAIRequest(params, snapshot.characterScene?.characterPrompts);
+    }
+    headers.Authorization = `Bearer ${credential.key.trim()}`;
+  } else if (provider === 'openai') {
+    url = openAIURLs(connection.endpoint, connection.path).generation;
+    if (advanced.mode !== 'text') url = openAIURLs(connection.endpoint, advanced.editPath).generation;
+    if (!credential.key.trim() && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname)) {
+      throw new GenerationError('请先在接口配置填写 API Key');
+    }
+    if (credential.key.trim()) headers.Authorization = `Bearer ${credential.key.trim()}`;
+    body = buildOpenAIRequest(params, snapshot.characterScene?.characterPrompts);
+    if ((imageEdit || advanced.mode !== 'text') && !isOpenAINovelAI(params.model) && params.negative.trim()) body.prompt += `\nAvoid: ${params.negative.trim()}`;
+  } else if (provider === 'sdwebui') {
+    base = sdwebuiBase(credential.endpoint);
+    if (location.protocol === 'https:' && new URL(base).protocol === 'http:'
+      && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(base).hostname)) throw new GenerationError('当前酒馆使用 HTTPS，请为远程 SDWebUI 配置 HTTPS 地址');
+    Object.assign(headers, sdwebuiHeaders(connection, credential.key));
+    const request = buildSDWebUIRequest(snapshot);
+    url = `${base}${request.path}`; body = request.body;
+  } else {
+    base = normalizeComfyEndpoint(credential.endpoint);
+    if (location.protocol === 'https:' && new URL(base).protocol === 'http:') {
+      throw new GenerationError('当前酒馆使用 HTTPS，请为 ComfyUI 配置 HTTPS 地址');
+    }
+    if (credential.auth === 'bearer') {
+      if (!credential.key.trim()) throw new GenerationError('请填写 ComfyUI 访问令牌');
+      headers.Authorization = `Bearer ${credential.key.trim()}`;
+    }
+    url = `${base}/prompt`;
+    const config = structuredClone(snapshot.config);
+    if (advanced.mode !== 'text' && config.mapping.image) config.params.image = 'reference.png';
+    body = { prompt: applyWorkflowParameters(config), client_id: randomUUID() };
+    outputNode = snapshot.config.outputNode;
+  }
+  return {
+    provider, model: snapshot.novelaiProcessing?.kind === 'upscale' ? body.model : params.model || params.checkpoint || snapshot.config?.name || 'SDWebUI 当前模型',
+    snapshot, headers, body, url, base, outputNode,
+    timeout: ['openai', 'sdwebui'].includes(provider) ? connection.timeout : 600,
+    ...(provider === 'sdwebui' ? { auth: connection.auth, username: connection.username,
+      sdTaskIdSupported: advanced.mode === 'text' ? connection.textTaskId : advanced.mode !== 'upscale' && connection.imageTaskId,
+      sdProgressMode: connection.progressMode } : {}),
+    identity: provider === 'openai' ? JSON.stringify([connection.endpoint.trim(), connection.path.trim(), params.model.trim(), credential.key.trim()]) : null,
+    identityFields: provider === 'openai' ? [connection.endpoint.trim(), connection.path.trim(), params.model.trim()] : [],
+  };
+}
+
+async function runGeneration(job) {
+  const stopProgress = watchComfyProgress(job);
+  try {
+  if (!job.saved) {
+    if (job.plan.chatRequestId && !job.execution && !await validateChatRequest(chatRequests.get(job.plan.chatRequestId))) {
+      job.status = 'cancelled';
+      throw new GenerationError('原聊天或提示词已变化，任务已取消');
+    }
+    job.failurePhase = 'preparing';
+    job.preparePayload = () => prepareAdvancedPayload(job, referenceAssets);
+    await submitGeneration(job);
+    job.failurePhase = 'retrieving';
+    job.phase = 'retrieving'; job.notify();
+    const downloaded = await downloadResults(job);
+    job.failurePhase = 'image-processing';
+    const received = await finishAdvancedImages(job, downloaded, referenceAssets);
+    verifiedImages.add(JSON.stringify([job.plan.provider, job.plan.url, job.plan.model, job.plan.headers.Authorization || '']));
+    const comicProject = state.comicLibrary.projects.find((project) => project.panels.some((panel) => panel.jobs.some((ref) => ref.id === job.id)));
+    const comicFrame = comicProject?.panels.findIndex((panel) => panel.jobs.some((ref) => ref.id === job.id));
+    const results = (job.plan.imageEdit || comicProject) && !job.plan.snapshot.novelaiProcessing ? received.slice(0, 1) : received;
+    job.controller.signal.throwIfAborted();
+    job.phase = 'saving'; job.notify();
+    job.failurePhase = 'task-state';
+    await job.checkpoint?.({ stage: 'saving', imageCount: results.length });
+    job.failurePhase = 'image-processing';
+    if (!job.rows) {
+      const rows = [];
+      for (const [index, result] of results.entries()) {
+        const snapshot = structuredClone(job.plan.snapshot);
+        const processing = snapshot.novelaiProcessing;
+        const variant = processingVariant(processing, index, results.length, result.filename);
+        if (processing) processing.variant = variant;
+        const params = snapshot.params || snapshot.config.params;
+        if (snapshot.provider === 'sdwebui' && result.model) params.model = result.model;
+        if (results.length > 1 && Object.hasOwn(params, 'seed')) params.seed = -1;
+        if (Number.isSafeInteger(result.seed) && result.seed >= 0) {
+          if (snapshot.provider === 'openai') params.extra = JSON.stringify({ ...JSON.parse(params.extra || '{}'), seed: result.seed });
+          else params.seed = result.seed;
+        }
+        const row = await makeDrawing(result.blob, {
+          id: `${job.id}-${index}`, createdAt: job.createdAt,
+          favorite: Boolean(comicProject),
+          title: comicProject ? `${comicProject.title} · 第 ${comicFrame + 1} 格`
+            : processing ? `${processingTitle(processing)}${variant ? ` · ${variant}` : ''}`
+            : `${params.positive.trim().slice(0, 40) || '绘图'}${results.length > 1 ? ` · ${index + 1}` : ''}`,
+          snapshot, batchId: job.id, chatBinding: job.plan.chatBinding,
+          ...(job.plan.imageEdit ? { version: { ...job.plan.imageEdit,
+            number: job.plan.imageEdit.number + index,
+            note: [job.plan.imageEdit.note, variant].filter(Boolean).join(' · ') } } : {}),
+        });
+        rows.push(row);
+      }
+      job.rows = rows;
+    }
+    if (job.rows.length) firstSuccess.mark(job.id, 'generated');
+    refreshFirstSuccess();
+    if (job.plan.provider === 'openai') generationVerified = job.plan.identity;
+    job.controller.signal.throwIfAborted();
+    job.failurePhase = 'saving';
+    if (!job.plan.imageEdit) await cleanupDrawings();
+    await drawingLibrary.add(job.rows, job.plan.storageLocation, { requestId: job.plan.chatRequestId });
+    job.saved = true; job.imageCount = job.rows.length;
+    job.savedIds = job.rows.map((row) => row.id);
+    firstSuccess.mark(job.id, 'saved', job.savedIds);
+    if (chatObservation?.chatKey === currentChat().key) firstSuccess.inserted(verificationContext(), chatObservation.inserted);
+    refreshFirstSuccess();
+  }
+  activeDrawingId = job.savedIds[0];
+  if (job.plan.provider === 'openai' && state.provider === 'openai' && openAIGenerationVerified()) {
+    connectionStatus = { message: '图片已返回 · 生图已验证', tone: 'success' };
+  }
+  job.failurePhase = 'refreshing';
+  notifyImagesChanged();
+  await reloadDrawings(true);
+  toast(`已${job.plan.snapshot.novelaiProcessing ? '处理' : '生成'}并保存 ${job.imageCount} 张图片`);
+  delete job.rows;
+  } finally { stopProgress(); delete job.preparePayload; }
+}
+
+function chatPost(type, value) {
+  if (isInstalled()) postWindowMessage(window.parent, { type, ...value });
+}
+
+function reportChatPreparation(request, phase) {
+  if (!request || request.jobId || request.controller.signal.aborted) return;
+  chatPost('linghuashi:chat-task', { requestId: request.requestId, binding: request.binding,
+    status: 'preparing', phase, ...(request.quickImage ? { imageId: request.imageId } : {}) });
+}
+
+function reportChatTask(job) {
+  const request = chatRequests.get(job.plan.chatRequestId);
+  if (!request) return;
+  const data = {
+    requestId: request.requestId, binding: request.binding,
+    status: ['paused', 'uncertain'].includes(job.status) ? 'failed' : job.status, phase: job.phase,
+    progress: job.progress,
+    error: job.status === 'paused' ? '任务已恢复，等待手动继续' : job.error || '',
+    recoverable: canRecoverGeneration(job),
+    savedIds: job.savedIds || [],
+    ...(request.quickImage ? { imageId: job.plan.imageEdit.parentId, id: job.id, execution: Boolean(job.execution) } : {}),
+  };
+  const serialized = JSON.stringify(data);
+  if (request.lastReport === serialized) return;
+  request.lastReport = serialized;
+  chatPost('linghuashi:chat-task', data);
+}
+
+async function validateChatRequest(request) {
+  if (!request || request.controller.signal.aborted || !state.enabled) return false;
+  const validationId = randomUUID();
+  return new Promise((resolve) => {
+    const finish = (valid) => {
+      clearTimeout(timer);
+      request.controller.signal.removeEventListener('abort', cancelled);
+      chatValidations.delete(validationId);
+      resolve(valid);
+    };
+    const cancelled = () => finish(false);
+    const timer = setTimeout(() => finish(false), 5000);
+    chatValidations.set(validationId, finish);
+    request.controller.signal.addEventListener('abort', cancelled, { once: true });
+    chatPost('linghuashi:chat-validate', { validationId, requestId: request.requestId, binding: request.restored ? request.binding : undefined, automatic: request.automatic });
+  });
+}
+
+export function receiveChatCommand(data) {
+  if (!isInstalled()) return;
+  if (data.type === 'linghuashi:chat-observed') {
+    if (data.chatKey !== currentChat().key || !Array.isArray(data.recognized) || !Array.isArray(data.inserted)) return;
+    chatObservation = { chatKey: data.chatKey, inserted: data.inserted.slice(0, 100) };
+    firstSuccess.recognize(verificationContext(), data.recognized);
+    firstSuccess.inserted(verificationContext(), chatObservation.inserted);
+    refreshFirstSuccess(); return;
+  }
+  if (data.type === 'linghuashi:chat-task-records') {
+    showPage('generate'); revealSetting('.generation-tasks');
+    void refreshTasks(); return;
+  }
+  if (data.type === 'linghuashi:chat-valid') {
+    chatValidations.get(data.validationId)?.(data.valid === true);
+    return;
+  }
+  if (data.type === 'linghuashi:chat-images-changed') {
+    void libraryReady.then(() => reloadDrawings()).catch((error) => toast(error.message)); return;
+  }
+  if (data.type === 'linghuashi:chat-image-open') {
+    if (!validBinding(data.binding) || !validImageId(data.id)
+      || !['view', 'edit', 'source', 'inpaint', 'enhance', 'restore'].includes(data.action)) return;
+    void openChatImage(data).catch((error) => toast(error.message)); return;
+  }
+  if (data.type === 'linghuashi:chat-image-control') {
+    if (!validBinding(data.binding) || !/^[a-f0-9-]{36}$/.test(data.taskId || '')
+      || !['recover', 'cancel'].includes(data.action)) return;
+    void (async () => {
+      await tasksReady; await refreshTasks();
+      const job = taskQueue.jobs.find((row) => row.id === data.taskId);
+      if (!job?.plan.imageEdit || job.plan.chatBinding?.id !== data.binding.id) throw new Error('配图任务已变化，请刷新聊天');
+      if (data.action === 'cancel') taskQueue.cancel(job.id);
+      else taskQueue.retry(job.id);
+    })().catch((error) => toast(error.message));
+    return;
+  }
+  if (data.type === 'linghuashi:chat-image-generate') {
+    if (!validBinding(data.binding) || !validImageId(data.imageId)
+      || !/^[a-f0-9-]{36}$/.test(data.requestId || '') || chatRequests.has(data.requestId)
+      || !['browser', 'server'].includes(data.storageLocation)
+      || data.styleMode !== undefined && !['current', 'original'].includes(data.styleMode)
+      || data.characterMode !== undefined && !['original', 'current'].includes(data.characterMode)
+      || data.prompt !== undefined && (typeof data.prompt !== 'string' || data.prompt.length > 32000)) return;
+    if (chatInbox.length >= 32) {
+      chatPost('linghuashi:chat-task', { requestId: data.requestId, imageId: data.imageId, status: 'failed', error: '生图队列已满，请稍后重试' }); return;
+    }
+    const request = { ...data, quickImage: true, automatic: false, controller: new AbortController() };
+    chatRequests.set(request.requestId, request); chatInbox.push(request);
+    reportChatPreparation(request, 'inbox'); void processChatInbox(); return;
+  }
+  if (['linghuashi:chat-view', 'linghuashi:chat-edit'].includes(data.type) && typeof data.id === 'string') {
+    void (async () => {
+      const revision = beginChatImageOpen();
+      await libraryReady;
+      await reloadDrawings();
+      if (revision !== chatImageOpenRevision) return;
+      assertChatImageWindowAvailable();
+      showPage('gallery');
+      if (data.type === 'linghuashi:chat-edit') {
+        const item = drawings.find((row) => row.id === data.id) || currentDrawing(drawings, data.id);
+        if (item) openImageEditor(item); else toast('图片已删除或位于其他存储位置');
+      } else openViewer(data.id);
+    })().catch((error) => toast(error.message));
+    return;
+  }
+  if (data.type === 'linghuashi:chat-assistant-open') {
+    if (!validBinding(data.binding)) return;
+    try {
+      const plan = parseAssistantResult(JSON.stringify(data.plan), { stored: true });
+      replaceAssistantDraft(plan, { operation: 'illustrate', input: plan.scene, binding: data.binding, requestId: data.requestId });
+      assistantUI.error = '';
+      showPage('assistant');
+    } catch (error) { toast(error.message); }
+    return;
+  }
+  if (['linghuashi:chat-assist', 'linghuashi:chat-draft-generate'].includes(data.type)) {
+    if (!validBinding(data.binding) || data.binding.kind !== 'smart'
+      || !/^[A-Za-z0-9_-]{1,80}$/.test(data.requestId || '') || chatRequests.has(data.requestId)) return;
+    if (chatInbox.length >= 32) {
+      chatPost('linghuashi:chat-task', { requestId: data.requestId, status: 'failed', error: '助手队列已满，请稍后重试' });
+      return;
+    }
+    const request = { ...data, automatic: data.automatic === true, controller: new AbortController() };
+    if (data.type === 'linghuashi:chat-draft-generate') {
+      try { request.assistantPlan = parseAssistantResult(JSON.stringify(data.plan), { stored: true }); }
+      catch (error) {
+        chatPost('linghuashi:chat-task', { requestId: data.requestId, status: 'failed', error: error.message }); return;
+      }
+      request.assistantOptions = normalizeAssistant(state.assistant);
+    }
+    chatRequests.set(request.requestId, request); chatInbox.push(request);
+    reportChatPreparation(request, 'inbox');
+    void processChatInbox(); return;
+  }
+  if (data.type === 'linghuashi:chat-generate') {
+    if (!validBinding(data.binding) || typeof data.prompt !== 'string' || !data.prompt.trim()
+      || data.prompt.length > 32000 || typeof data.requestId !== 'string'
+      || !/^[A-Za-z0-9_-]{1,80}$/.test(data.requestId) || chatRequests.has(data.requestId)) return;
+    if (chatInbox.length >= 32) {
+      chatPost('linghuashi:chat-task', { requestId: data.requestId, status: 'failed', error: '确认队列已满，请稍后重试' });
+      return;
+    }
+    const request = { ...data, automatic: data.automatic === true, controller: new AbortController() };
+    chatRequests.set(request.requestId, request);
+    chatInbox.push(request);
+    reportChatPreparation(request, 'inbox');
+    void processChatInbox();
+    return;
+  }
+  const request = chatRequests.get(data.requestId);
+  if (!request && data.type === 'linghuashi:chat-recover') {
+    void (async () => {
+      await tasksReady;
+      await libraryReady;
+      await refreshTasks();
+      const restored = chatRequests.get(data.requestId);
+      const recovered = taskQueue.jobs.find((item) => item.id === restored?.jobId);
+      if (recovered) taskQueue.retry(recovered.id);
+      else toast('未找到可恢复任务，请打开生图工坊核对记录');
+    })();
+    return;
+  }
+  if (!request) return;
+  const job = taskQueue.jobs.find((item) => item.id === request.jobId);
+  if (data.type === 'linghuashi:chat-cancel') {
+    if (data.pendingOnly && job?.status === 'running') return;
+    request.controller.abort();
+    if (job) taskQueue.cancel(job.id);
+    else {
+      request.dialog?.close();
+      chatPost('linghuashi:chat-task', { requestId: request.requestId, status: 'cancelled' });
+    }
+  }
+  if (data.type === 'linghuashi:chat-recover' && job && ['failed', 'paused'].includes(job.status)) {
+    // Recovery downloads the accepted result; it never creates another billable request.
+    void Promise.resolve(libraryReady).then(() => taskQueue.retry(job.id));
+  }
+}
+
+async function processChatInbox() {
+  if (processingChat) return;
+  processingChat = true;
+  try {
+    while (chatInbox.length) {
+      const request = chatInbox.shift();
+      if (request.controller.signal.aborted) continue;
+      try {
+        reportChatPreparation(request, 'storage');
+        await libraryReady;
+        await waitForChatWindow(document.getElementById('overlay-root'), {
+          signal: request.controller.signal,
+          onWait: () => reportChatPreparation(request, 'window'),
+        });
+        if (request.controller.signal.aborted) continue;
+        reportChatPreparation(request, '');
+        if (request.type === 'linghuashi:chat-assist') await analyzeChat(request);
+        else if (request.quickImage) await enqueueChatImage(request);
+        else await enqueueGeneration(request);
+      } catch (error) {
+        chatPost('linghuashi:chat-task', { requestId: request.requestId, binding: request.binding,
+          status: request.controller.signal.aborted ? 'cancelled' : 'failed', error: error.message,
+          ...(request.quickImage ? { imageId: request.imageId } : {}) });
+      }
+    }
+  } finally { processingChat = false; }
+}
+
+function assertChatImageWindowAvailable() {
+  if (blockingChatWindow(document.getElementById('overlay-root')) || processingPanel.dialog) {
+    throw new Error('已有编辑窗口打开，请先保存或关闭；本次选中的图片尚未打开');
+  }
+}
+
+function beginChatImageOpen() {
+  assertChatImageWindowAvailable();
+  const revision = ++chatImageOpenRevision;
+  // A hidden console may still hold the previous read-only preview.
+  if (document.querySelector('#overlay-root .drawing-viewer')) closeDrawingViewer();
+  return revision;
+}
+
+async function openChatImage(data) {
+  const revision = beginChatImageOpen();
+  await libraryReady;
+  if (revision !== chatImageOpenRevision) return;
+  if (state.cacheLocation !== data.storageLocation) {
+    throw new Error(`这张配图保存在${data.storageLocation === 'server' ? '酒馆服务器' : '浏览器'}，请先在插件设置切换图片缓存位置`);
+  }
+  await reloadDrawings();
+  if (revision !== chatImageOpenRevision) return;
+  assertChatImageWindowAvailable();
+  if (state.cacheLocation !== data.storageLocation) throw new Error('图片存储位置已变化，请重新点击图片');
+  const item = drawings.find((row) => row.id === data.id);
+  if (!chatImageBelongsTo(item, data.binding)) throw new Error('图片已删除或配图关联已变化，请刷新聊天');
+  if (data.action === 'restore') {
+    const previous = { provider: state.provider, novelai: state.novelai, comfyui: state.comfyui, openai: state.openai, sdwebui: state.sdwebui,
+      characterSceneOverride: state.characterSceneOverride, characterSceneOverrideProvider: state.characterSceneOverrideProvider };
+    try {
+      const message = restoreSnapshot(state, item.snapshot);
+      persist(); resetConnection(); activeDrawingId = item.id; showPage('generate'); toast(message);
+    } catch (error) { Object.assign(state, previous); throw error; }
+  } else if (data.action === 'view') openViewer(item.id);
+  else if (data.action === 'enhance') processingPanel.open(item);
+  else {
+    openImageEditor(item);
+    if (data.action === 'source' || data.action === 'inpaint') await attachEditorSource(data.action === 'source' ? 'image' : 'inpaint');
+  }
+}
+
+async function enqueueChatImage(request) {
+  try {
+    const rows = await drawingLibrary.list(request.storageLocation);
+    const parent = rows.find((row) => row.id === request.imageId);
+    if (!chatImageBelongsTo(parent, request.binding) || !await validateChatRequest(request)) throw new Error('原消息或图片已变化，请重新打开配图');
+    let original = imageEditDraft(parent.snapshot);
+    if (request.randomize === true && request.edits === undefined && request.styleMode !== 'original') {
+      original = applyChatImageStyle(original, captureSnapshot({ ...state, provider: original.provider }),
+        samples[0].prompt, request.prompt);
+    }
+    if (request.characterMode === 'current') {
+      const chatKey = request.binding.chatKey;
+      const live = resolveCharacterScene(state.characterProfiles, chatKey, currentChat().key === chatKey ? currentChat().avatars : []);
+      original = refreshChatImageCharacters(original, effectiveProfiles(state.characterProfiles, chatKey), live);
+    }
+    const draft = applyChatImageEdit(original, request.edits, request.randomize === true);
+    const snapshot = prepareImageEdit(draft), relation = editRelation(parent, request.edits ? '聊天修改提示词' : '聊天再画一张');
+    relation.number = Math.max(...groupVersions(rows, parent.id).map((row) => row.version?.number || 1)) + 1;
+    await enqueueGeneration(request, undefined, { snapshot, relation, chatBinding: parent.chatBinding, storageLocation: request.storageLocation });
+  } catch (error) {
+    chatPost('linghuashi:chat-task', { requestId: request.requestId, imageId: request.imageId, binding: request.binding,
+      status: request.controller.signal.aborted ? 'cancelled' : 'failed', error: error.message });
+  }
+}
+
+function confirmGeneration(snapshot, request) {
+  const params = snapshot.params || snapshot.config.params;
+  const overlay = document.getElementById('overlay-root');
+  return new Promise((resolve) => {
+    overlay.innerHTML = `<dialog class="nai-preset-dialog generation-confirm" aria-label="确认生图提示词"><form>
+      <header><h2>确认生图提示词</h2>${iconButton('x', '关闭', 'generation-close')}</header>
+      <p>${request?.binding ? `聊天配图 ${request.binding.slot + 1} · ` : request?.external ? `来自 ${esc(request.external)} · ` : ''}${esc(params.model || params.checkpoint || snapshot.config.name)} · ${params.n || params.nSamples || params.batchSize || 1} 张</p>
+      ${field('正向提示词', `<textarea name="positive" rows="5" maxlength="32000" ${snapshot.provider === 'comfyui' && !snapshot.config.mapping.positive ? 'readonly' : ''}>${esc(params.positive)}</textarea>`)}
+      <footer>${button('x', '取消', 'generation-close', 'secondary')}<button type="submit" class="ui-button primary">${icon('sparkles')}<span>确认生成</span></button></footer>
+    </form></dialog>`;
+    const dialog = overlay.querySelector('dialog');
+    if (request) request.dialog = dialog;
+    let confirmed = false;
+    const abort = () => dialog.close();
+    request?.controller.signal.addEventListener('abort', abort, { once: true });
+    dialog.querySelectorAll('[data-action="generation-close"]').forEach((node) => node.addEventListener('click', abort));
+    dialog.addEventListener('close', () => {
+      request?.controller.signal.removeEventListener('abort', abort);
+      if (request) delete request.dialog;
+      dialog.remove(); resolve(confirmed);
+    }, { once: true });
+    dialog.querySelector('form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      params.positive = String(new FormData(event.target).get('positive')).trim();
+      if (!params.positive) return;
+      confirmed = true; dialog.close();
+    });
+    paintIcons(); dialog.showModal();
+    if (request) {
+      if (!request.external) chatPost('linghuashi:chat-task', { requestId: request.requestId, status: 'confirming' });
+      chatPost('linghuashi:attention', {});
+    }
+    if (request?.controller.signal.aborted) dialog.close();
+  });
+}
+
+async function prepareExternalGeneration(options, metadata, signal, id) {
+  if (backupPanel.ui.busy || backupPanel.ui.restoring) throw apiError('BUSY', '备份或恢复正在进行，请稍后重试');
+  if (drawingUI.loading || !drawingLibrary.db) throw apiError('STORAGE_UNAVAILABLE', '图片存储尚未准备好');
+  const { snapshot, connection, useCurrentConnection } = prepareExtensionSnapshot(state, options);
+  const provider = snapshot.provider, params = snapshot.params || snapshot.config.params;
+  const storageLocation = options.storageLocation || state.cacheLocation;
+  if (storageLocation === 'server') await drawingLibrary.list('server');
+  const credential = useCurrentConnection ? { ...credentials[provider] }
+    : { endpoint: connection.endpoint, auth: connection.auth || 'none',
+      key: connection.keyRef ? await credentialRequest('read', provider, { ref: connection.keyRef }) : '' };
+  if (useCurrentConnection && provider === 'openai') Object.assign(connection, {
+    endpoint: state.openaiEndpoint, path: state.openaiPath, timeout: state.openaiTimeout,
+  });
+  if (params.seed === -1) params.seed = crypto.getRandomValues(new Uint32Array(1))[0];
+  const scene = snapshot.characterScene;
+  if (scene?.chatKey && scene.chatKey !== currentChat().key) throw apiError('CHAT_TARGET_INVALID', '角色档案属于另一聊天');
+  let prepared = applyCharacterScene(snapshot, scene);
+  if (state.confirm) {
+    if (document.getElementById('overlay-root').childElementCount) throw apiError('BUSY', '请先处理当前编辑窗口');
+    const controller = { signal };
+    if (!await confirmGeneration(prepared, { external: metadata.source.name, controller })) throw apiError('CANCELLED', '已取消生图');
+  }
+  signal.throwIfAborted();
+  const plan = await prepareGenerationPlan(prepared, credential, connection, { external: true });
+  plan.keyRef = plan.headers.Authorization ? await credentialRequest('write', provider, { key: credential.key, ref: connection.keyRef }) : '';
+  plan.storageLocation = storageLocation;
+  if (options.chat) {
+    if (storageLocation !== state.cacheLocation) throw apiError('CHAT_TARGET_INVALID', '聊天配图须使用当前图片存储位置');
+    signal.throwIfAborted();
+    const target = await extensionChatRequest({ chat: options.chat, taskId: id, storageLocation });
+    plan.chatRequestId = id; plan.chatBinding = target.binding;
+    const controller = new AbortController(), abort = () => controller.abort(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    const request = { requestId: id, binding: target.binding, automatic: false, controller, external: true };
+    chatRequests.set(id, request);
+    const valid = await validateChatRequest(request);
+    signal.removeEventListener('abort', abort);
+    if (signal.aborted || !valid) {
+      chatPost('linghuashi:chat-task', { requestId: id, binding: target.binding, status: 'cancelled' });
+      chatRequests.delete(id);
+      throw apiError(signal.aborted ? 'CANCELLED' : 'CHAT_TARGET_INVALID', '原消息或回复分支已变化');
+    }
+  }
+  return plan;
+}
+
+export function receiveExtensionCommand(data) {
+  if (!isInstalled() || typeof data.requestId !== 'string' || !/^[a-f0-9-]{36}$/.test(data.requestId)) return;
+  if (data.type === 'linghuashi:extension-abort') { externalTaskService.abort(data.requestId); return; }
+  void externalTaskService.dispatch(data).then(
+    (value) => chatPost('linghuashi:extension-response', { requestId: data.requestId, value }),
+    (error) => chatPost('linghuashi:extension-response', { requestId: data.requestId,
+      error: { code: error.code || (error.name === 'AbortError' ? 'CANCELLED' : 'REQUEST_FAILED'),
+        message: String(error.message || '扩展调用失败').replace(/\b(?:pst-|sk-|STD-)[A-Za-z0-9_-]+/g, '[已隐藏]').slice(0, 500),
+        ...(error.taskId ? { taskId: error.taskId } : {}) } }),
+  );
+}
+
+async function enqueueGeneration(request, assistantResult, imageEdit) {
+  if (backupPanel.ui.restoring) throw new GenerationError('配置正在恢复，请完成后再生图');
+  const report = (status, error = '') => {
+    if (request) chatPost('linghuashi:chat-task', { requestId: request.requestId, status, error,
+      ...(request.quickImage ? { imageId: request.imageId, binding: request.binding } : {}) });
+    else if (error && imageEdit) throw new Error(error);
+    else if (error) {
+      generationIssue = error;
+      if (state.page === 'assistant') openWorkflowPage('generate', 'assistant');
+      else render(true);
+      if (state.page === 'generate') revealSetting('.generation-issue');
+    }
+  };
+  if (workbenchPanel.ui.busy) { report('failed', '正在保存组合任务，请稍后提交'); return; }
+  if (!state.enabled) { report('cancelled'); return; }
+  if (drawingUI.loading || !drawingLibrary.db) { report('failed', '图片存储尚未准备好，请稍后重试'); return; }
+  const outfitDecision = !request && !imageEdit ? await resolvePendingOutfits() : true;
+  if (!outfitDecision) return;
+  const storageLocation = imageEdit?.storageLocation || request?.storageLocation || state.cacheLocation;
+  if (storageLocation === 'server') {
+    try { await drawingLibrary.list('server'); }
+    catch (error) { report('failed', error.message); return; }
+  }
+  let snapshot = imageEdit ? structuredClone(imageEdit.snapshot)
+    : request?.assistantSnapshot ? structuredClone(request.assistantSnapshot) : captureSnapshot(state);
+  delete snapshot.extensionRequest;
+  let assistantPlan = request?.assistantPlan || assistantResult?.plan;
+  if (assistantPlan && outfitDecision === 'applied') assistantPlan = {
+    ...structuredClone(assistantPlan), characterScene: structuredClone(snapshot.characterScene),
+  };
+  if (assistantPlan) {
+    try {
+      snapshot = applyAssistantPlan(snapshot, assistantPlan, request?.assistantOptions || assistantResult?.options || state.assistant);
+      snapshot.assistant = assistantPlan;
+    } catch (error) { report('failed', error.message); return; }
+  }
+  let params = snapshot.params || snapshot.config.params;
+  if (request) {
+    if (!await validateChatRequest(request)) { report('cancelled'); return; }
+  }
+  if (request && !imageEdit) {
+    if (snapshot.provider === 'comfyui' && !snapshot.config.mapping.positive) {
+      report('failed', '请先为 ComfyUI 工作流映射正向提示词节点'); return;
+    }
+    if (!assistantPlan) {
+      if (snapshot.characterScene?.applied) {
+        params.positive = snapshot.characterScene.basePositive;
+        params.negative = snapshot.characterScene.baseNegative;
+        delete snapshot.characterScene.applied;
+      }
+      let structured;
+      try {
+        structured = prepareChatMultiCharacterPrompt(snapshot, request.prompt, {
+          profiles: effectiveProfiles(state.characterProfiles, request.binding.chatKey), chatKey: request.binding.chatKey,
+          defaultPrompt: samples[0].prompt,
+        });
+      } catch (error) { report('failed', error.message); return; }
+      if (structured) {
+        snapshot = structured;
+        params = snapshot.params || snapshot.config.params;
+      } else {
+        snapshot.chatPromptStyle = createChatPromptStyle(params.positive, request.prompt, samples[0].prompt);
+        params.positive = mergeChatPrompt(params.positive, request.prompt, samples[0].prompt);
+      }
+    } else {
+      const promptStyle = inferChatPromptStyle(params.positive, assistantPlan.positive, samples[0].prompt);
+      if (promptStyle) snapshot.chatPromptStyle = promptStyle;
+    }
+    if (params.positive.length > 32000) { report('failed', '合并后的提示词超过 32000 字符'); return; }
+  }
+  if (params.seed === -1) params.seed = crypto.getRandomValues(new Uint32Array(1))[0];
+  const credential = { ...credentials[snapshot.provider] };
+  const connection = snapshot.provider === 'sdwebui' ? structuredClone(state.connections.sdwebui)
+    : { endpoint: state.openaiEndpoint, path: state.openaiPath, timeout: state.openaiTimeout };
+  try {
+    await tasksReady;
+    if (!request && !imageEdit && !assistantPlan) {
+      snapshot = prepareMultiCharacterPrompt(snapshot, params.positive, {
+        profiles: effectiveProfiles(state.characterProfiles, currentChat().key), chatKey: currentChat().key,
+      }) || snapshot;
+      params = snapshot.params || snapshot.config.params;
+    }
+    const scene = snapshot.characterScene;
+    if (request && scene?.chatKey && scene.chatKey !== request.binding.chatKey) {
+      throw new Error('角色档案快照属于另一聊天，请重新准备提示词');
+    }
+    if (!imageEdit) snapshot = applyCharacterScene(snapshot, scene, assistantPlan?.characters, assistantPlan?.characterIds);
+    if ((!imageEdit || request?.quickImage && !request.edits) && state.confirm) {
+      const confirmation = request?.quickImage ? imageEditDraft(snapshot) : snapshot;
+      if (!await confirmGeneration(confirmation, request)) { report('cancelled'); return; }
+      if (request?.quickImage) snapshot = prepareImageEdit(confirmation);
+    }
+    await saveConnection(snapshot.provider);
+    const plan = await prepareGenerationPlan(snapshot, credential, connection, imageEdit);
+    plan.keyRef = plan.headers.Authorization ? await credentialRequest('write', snapshot.provider, {
+      key: credential.key, ref: state.connections[snapshot.provider].keyRef,
+    }) : '';
+    plan.storageLocation = storageLocation;
+    if (imageEdit) { plan.imageEdit = imageEdit.relation; plan.chatBinding = imageEdit.chatBinding || null; }
+    if (!state.enabled || (request && !await validateChatRequest(request))) { report('cancelled'); return; }
+    if (request) {
+      plan.chatRequestId = request.requestId;
+      plan.chatBinding = request.binding;
+    }
+    const record = await taskPersistence.create(plan);
+    firstSuccess.begin(verificationContext(plan), { id: record.id, storageContext: storageVerificationContext(plan.storageLocation), bindingId: request?.binding?.id || '',
+      requestId: request?.requestId || '' });
+    if (!imageEdit) consumeTemporaryOutfits(snapshot.characterScene);
+    const job = taskQueue.add(plan, { id: record.id });
+    if (request) request.jobId = job.id;
+    activeJobId = job.id;
+    runtimeState = job.status === 'running' ? 'generating' : 'queued';
+    render();
+    return job;
+  } catch (error) {
+    report(request?.controller.signal.aborted ? 'cancelled' : 'failed',
+      error.name === 'TimeoutError' ? '服务识别超时，请重试' : error instanceof TypeError ? '连接失败，请检查服务地址和跨域设置' : error.message);
+  }
+}
+
+async function enqueueBatch(preview) {
+  const ids = [], plans = [];
+  if (!state.enabled || backupPanel.ui.restoring) throw new Error('请先启用插件并完成配置恢复');
+  if (!preview?.rows?.length || preview.rows.length > BATCH_LIMIT) throw new Error('请先预览组合');
+  const outfits = await resolvePendingOutfits();
+  if (!outfits) return { ids: [], error: '已取消，尚未提交组合生图' };
+  if (outfits === 'applied') throw new Error('服装已应用，请重新预览组合后再生成');
+  await libraryReady; await tasksReady;
+  if (!drawingLibrary.db || drawingUI.loading) throw new Error('图片存储尚未准备好');
+  if (taskQueue.jobs.filter((job) => ['queued', 'running'].includes(job.status)).length + preview.rows.length > BATCH_LIMIT) {
+    throw new Error('加上现有等待和运行任务后超过 32 个，请先等待完成');
+  }
+  const provider = preview.rows[0].snapshot.provider, storageLocation = state.cacheLocation;
+  if (provider !== state.provider) throw new Error('生图模式已变化，请重新预览');
+  const credential = { ...credentials[provider] };
+  const connection = provider === 'sdwebui' ? structuredClone(state.connections.sdwebui)
+    : { endpoint: state.openaiEndpoint, path: state.openaiPath, timeout: state.openaiTimeout };
+  const groupId = randomUUID(), createdAt = Date.now();
+  if (advancedOf(preview.rows[0].snapshot).mode === 'inpaint' && advancedPanel.ui.dirty) throw new Error('蒙版有未保存修改，请回生图工坊保存后重新预览');
+  await advancedPanel.beforeGenerate();
+  if (storageLocation === 'server') await drawingLibrary.list('server');
+  await saveConnection(provider);
+  const keyRef = credential.key.trim() ? await credentialRequest('write', provider, { key: credential.key, ref: state.connections[provider].keyRef }) : '';
+  if (provider === 'novelai' && resolveNovelAIService(credential.key, credential.endpoint).kind === 'identify') {
+    const service = await identifySkService(credential.key, { signal: AbortSignal.timeout(12000) });
+    credential.endpoint = service.endpoint;
+  }
+  for (const row of preview.rows) {
+    let snapshot = structuredClone(row.snapshot);
+    snapshot = applyCharacterScene(snapshot, snapshot.characterScene);
+    snapshot.experiment = { id: groupId, mode: preview.mode, index: row.index, label: row.label, createdAt };
+    const plan = await prepareGenerationPlan(snapshot, credential, connection);
+    plan.keyRef = keyRef; plan.storageLocation = storageLocation; plans.push(plan);
+  }
+  const created = [];
+  try {
+    for (const plan of plans) {
+      const record = await taskPersistence.create(plan);
+      firstSuccess.begin(verificationContext(plan), { id: record.id, storageContext: storageVerificationContext(plan.storageLocation) });
+      created.push({ plan, id: record.id }); ids.push(record.id);
+    }
+  } catch (error) {
+    for (const row of created) { const job = taskQueue.add(row.plan, { id: row.id, defer: true }); job.status = 'paused'; }
+    return { ids, error: `任务保存中断：${error.message}。已保存 ${ids.length} 个，暂未提交，可在任务记录中核对后继续。` };
+  }
+  if (!state.enabled || state.cacheLocation !== storageLocation) {
+    for (const row of created) { const job = taskQueue.add(row.plan, { id: row.id, defer: true }); job.status = 'paused'; }
+    return { ids, error: '配置发生变化，任务已保存为等待继续，请在任务记录中核对' };
+  }
+  for (const row of created) taskQueue.add(row.plan, { id: row.id, defer: true });
+  consumeTemporaryOutfits(preview.rows[0].snapshot.characterScene);
+  activeJobId = ids[0]; taskQueue.pump(); render();
+  return { ids };
+}
+
+async function enqueueComicPanels(project, panelIds, token) {
+  if (!state.enabled || backupPanel.ui.restoring) throw new Error('请先启用插件并完成配置恢复');
+  const prepared = preparedComicGeneration;
+  preparedComicGeneration = null;
+  const signature = () => comicGenerationSignature(
+    state.comicLibrary.projects.find((row) => row.id === project.id) || project, panelIds, comicGenerationIdentity());
+  if (!prepared || prepared.token !== token || prepared.signature !== signature()) throw new Error('生图确认已失效，请重新选择画格并确认');
+  await libraryReady; await tasksReady;
+  if (!drawingLibrary.db || drawingUI.loading) throw new Error('图片存储尚未准备好');
+  if (!Array.isArray(panelIds) || !panelIds.length || panelIds.length > 12 || new Set(panelIds).size !== panelIds.length) throw new Error('请选择 1 至 12 个画格');
+  const live = state.comicLibrary.projects.find((row) => row.id === project.id);
+  if (!live) throw new Error('漫画项目已变化，请重新选择');
+  const panels = panelIds.map((id) => live.panels.find((panel) => panel.id === id));
+  if (panels.some((panel) => !panel || comicPanelBusy(panel, taskQueue.jobs))) throw new Error('画格不存在或已有待处理任务');
+  if (taskQueue.jobs.filter((job) => ['queued', 'running'].includes(job.status)).length + panels.length > 32) throw new Error('连同现有任务超过 32 个，请等待部分任务完成');
+  const { provider, storageLocation, credential, rows: plans } = prepared;
+  if (storageLocation === 'server') await drawingLibrary.list('server');
+  await saveConnection(provider);
+  const keyRef = credential.key.trim() ? await credentialRequest('write', provider, { key: credential.key, ref: state.connections[provider].keyRef }) : '';
+  if (prepared.signature !== signature()) throw new Error('生图配置或提示词已变化，尚未提交，请重新确认');
+  for (const { plan } of plans) { plan.keyRef = keyRef; plan.storageLocation = storageLocation; }
+  const created = [];
+  let failure;
+  try {
+    for (const row of plans) {
+      if (prepared.signature !== signature()) throw new Error('生图配置发生变化');
+      const record = await taskPersistence.create(row.plan);
+      firstSuccess.begin(verificationContext(row.plan), { id: record.id, storageContext: storageVerificationContext(row.plan.storageLocation) });
+      created.push({ ...row, id: record.id });
+    }
+  } catch (error) { failure = error; }
+  if (!created.length) throw failure || new Error('任务未能保存');
+  const current = state.comicLibrary.projects.find((row) => row.id === project.id);
+  if (!current) throw new Error('漫画项目已变化；任务保留为暂停，请在任务记录中核对');
+  const next = structuredClone(current);
+  for (const row of created) {
+    const panel = next.panels.find((panel) => panel.id === row.panelId);
+    if (!panel) throw new Error('漫画画格已变化；任务保留为暂停，请在任务记录中核对');
+    panel.jobs = [...panel.jobs.slice(-23), { id: row.id, location: storageLocation, createdAt: Date.now() }];
+  }
+  const previous = state.comicLibrary;
+  state.comicLibrary = saveComicProject(previous, next);
+  try { persist(); } catch (error) { state.comicLibrary = previous; throw new Error(`画格关联保存失败，任务尚未提交：${error.message}`); }
+  if (failure || !state.enabled || prepared.signature !== signature()) {
+    for (const row of created) {
+      const job = taskQueue.add(row.plan, { id: row.id, defer: true }); job.status = 'paused';
+    }
+    return { ids: created.map((row) => row.id), error: `任务保存中断或配置发生变化，已保留 ${created.length} 个暂停任务，请在任务记录中核对后手动继续。${failure?.message || ''}` };
+  }
+  for (const row of created) taskQueue.add(row.plan, { id: row.id, defer: true });
+  activeJobId = created[0].id; taskQueue.pump(); render();
+  return { ids: created.map((row) => row.id) };
+}
+
+async function refreshTasks() {
+  if (taskRefreshing) return taskRefreshWork;
+  if (workbenchPanel.ui.busy || comicPanel.submitting) return;
+  taskRefreshing = true;
+  taskRefreshWork = (async () => {
+  try {
+    const result = await taskPersistence.list();
+    for (const row of result.rows) {
+      if (row.plan.chatRequestId && !chatRequests.has(row.plan.chatRequestId)) {
+        chatRequests.set(row.plan.chatRequestId, {
+          requestId: row.plan.chatRequestId, binding: row.plan.chatBinding,
+          jobId: row.id, automatic: false, restored: true, controller: new AbortController(),
+          quickImage: Boolean(row.plan.imageEdit), imageId: row.plan.imageEdit?.parentId,
+        });
+      }
+    }
+    taskError = '';
+    taskQueue.restore(result.rows);
+    await syncTaskImages();
+  } catch (error) { taskError = `任务记录暂时无法读取：${error.message}`; }
+  finally { taskRefreshing = false; refreshBackgroundStatus(); }
+  })();
+  return taskRefreshWork;
+}
+
+function generate() {
+  if (document.getElementById('overlay-root').childElementCount) { toast('请先处理当前窗口'); return; }
+  if (generationSubmitting) return;
+  generationIssue = '';
+  generationSubmitting = true;
+  render();
+  void advancedPanel.beforeGenerate().then(() => enqueueGeneration()).catch((error) => {
+    generationIssue = error.message; render(true); revealSetting('.generation-issue');
+  }).finally(() => { generationSubmitting = false; render(); });
+}
+
+function openViewer(imageId) {
+  const item = drawings.find((row) => row.id === (imageId || activeDrawingId)) || currentDrawing(drawings, imageId);
+  if (!item) { toast('图片尚未存入绘图管理'); return; }
+  const filtered = state.page === 'gallery' ? filterDrawings(drawings, drawingUI.filters) : drawingGroups(drawings);
+  viewerUI.ids = filtered.map(versionGroupId);
+  if (!viewerUI.ids.includes(versionGroupId(item))) viewerUI.ids.push(versionGroupId(item));
+  viewerUI.index = viewerUI.ids.indexOf(versionGroupId(item));
+  viewerUI.imageId = item.id; viewerUI.compare = false;
+  viewerUI.review = false;
+  viewerUI.details = window.innerWidth > 720;
+  viewerUI.zoom = false;
+  showDrawingViewer();
+}
+
+async function downloadImage(imageId) {
+  const item = drawings.find((row) => row.id === (imageId || activeDrawingId));
+  if (item) {
+    await drawingOperation(async () => {
+      const loaded = await drawingLibrary.materialize(item);
+      saveBlob(loaded.blob, drawingFilename(loaded));
+    });
+    return;
+  }
+  const sample = samples.find((item) => item.id === imageId) || activeSample;
+  const link = document.createElement('a');
+  link.href = sample.src;
+  link.download = `${config.name}-${sample.title}.jpg`;
+  link.click();
+}
+
+export function mountPlugin(root, next) {
+  host = root;
+  config = next;
+  runtimeState = next.state;
+  persist();
+  libraryReady = Promise.resolve().then(initializeDrawings);
+  render();
+  if (state.page === 'assistant' && state.assistant.source === 'tavern' && isInstalled()) void fetchAssistantModels(false);
+  if (state.page === 'characters') void refreshProfileCards();
+  tasksReady = refreshTasks();
+  startGenerationPolling({
+    refresh: refreshTasks, window, document,
+    resumed: async () => {
+      await libraryReady;
+      await reloadDrawings(true);
+      notifyImagesChanged();
+    },
+  });
+  if (typeof BroadcastChannel !== 'undefined') {
+    let imageSync;
+    const connect = () => {
+      if (imageSync) return;
+      imageSync = new BroadcastChannel(`linghuashi-chat:${currentAccount()}`);
+      imageSync.onmessage = (event) => {
+        if (event.data?.type === 'images-changed') void libraryReady.then(() => reloadDrawings(true)).catch((error) => toast(error.message));
+      };
+    };
+    connect();
+    window.addEventListener('pageshow', connect);
+    window.addEventListener('pagehide', () => { imageSync?.close(); imageSync = null; });
+  }
+  host.addEventListener('click', async (event) => {
+    const target = event.target.closest('button');
+    if (!target) return;
+    if (['generate', 'assistant', 'comic'].includes(target.dataset.creationPage)) {
+      pendingSave.flush(); openWorkflowPage(target.dataset.creationPage); return;
+    }
+    if (target.dataset.guideAction) {
+      try { await guideAction(target.dataset.guideAction, target); } catch (error) { toast(error.message); }
+      return;
+    }
+    if (['tags', 'assistant'].includes(target.dataset.guideChatMode)) {
+      state.assistant.autoPrompt = target.dataset.guideChatMode === 'assistant';
+      state.auto = true; state.inline = true; state.experience.completed = false;
+      persist(); render(true); return;
+    }
+    if (START_GOALS.some(([id]) => id === target.dataset.guideGoal)) {
+      state.experience.goal = target.dataset.guideGoal; state.experience.completed = false;
+      persist(); render(true); return;
+    }
+    if (['common', 'full'].includes(target.dataset.guideLevel)) {
+      state.experience.level = target.dataset.guideLevel;
+      for (const fold of host.querySelectorAll('[data-experience-fold]')) fold.open = state.experience.level === 'full' || fold.hasAttribute('data-experience-active');
+      persist(); render(true); return;
+    }
+    if (target.dataset.page) {
+      if (target.closest('.plugin-nav')) workflowReturn = null;
+      if (state.page === 'styles' && artistUI.dirty && target.dataset.page !== 'styles' && !await discardArtistChanges()) return;
+      if (state.page === 'styles' && target.dataset.page !== 'styles' && artistUI.dirty) {
+        artistDraft(state.artistLibrary.find((entry) => entry.id === artistUI.draft?.id) || state.artistLibrary[0] || null);
+        artistUI.dirty = false;
+      }
+      showPage(target.dataset.page);
+      return;
+    }
+    if (target.dataset.artistSelect) {
+      if (await discardArtistChanges()) { artistDraft(state.artistLibrary.find((entry) => entry.id === target.dataset.artistSelect)); render(); }
+      return;
+    }
+    if (target.dataset.profileSelect || target.dataset.profileScope) {
+      if (!await discardProfileChanges()) return;
+      if (target.dataset.profileScope) profileUI.scope = target.dataset.profileScope;
+      loadProfileDraft(target.dataset.profileSelect); render(); return;
+    }
+    if (target.dataset.choice && ['generationMode', 'cacheLocation'].includes(target.dataset.choice)) {
+      if (target.dataset.choice === 'cacheLocation') { await switchImageStorage(target.dataset.value); return; }
+      state[target.dataset.choice] = target.dataset.value;
+      Object.assign(state, normalizeSettings(state));
+      try { await taskPersistence.configure(); }
+      catch (error) { toast(`调度设置未能同步：${error.message}`); }
+      persist(); render(); taskQueue.pump(); return;
+    }
+    if (target.dataset.shape) { state.shape = target.dataset.shape; persist(); render(); return; }
+    if (target.dataset.provider) { keyVisible = false; state.provider = target.dataset.provider; Object.assign(state, normalizeSettings(state)); resetConnection(); persist(); render(true); checkConnection(); return; }
+    if (target.dataset.style) { state.style = target.dataset.style; persist(); render(); return; }
+    if (target.dataset.drawing) { activeDrawingId = target.dataset.drawing; activeJobId = null; runtimeState = 'success'; render(); return; }
+    if (target.dataset.sample) { activeSample = samples.find((item) => item.id === target.dataset.sample); runtimeState = 'success'; render(); return; }
+    switch (target.dataset.action) {
+      case 'settings-reset': settingsResetPanel.open(); break;
+      case 'start-guide': await guideAction('open'); revealSetting('.start-guide'); break;
+      case 'connection-new': case 'connection-copy': case 'connection-rename': case 'connection-delete':
+        connectionDialog(target.dataset.action.replace('connection-', '')); break;
+      case 'connection-save':
+        try {
+          await presetOperation(async () => {
+            const provider = state.provider; await saveConnection(provider);
+            const selected = state.connectionProfiles[provider].find((entry) => entry.id === state.connectionProfileIds[provider]);
+            if (!selected) throw new Error('请先新增接口');
+            saveConnectionProfile(state, provider, selected.name, selected.id); persist();
+          });
+          render(); toast('接口配置已更新');
+        } catch (error) { toast(error.message); }
+        break;
+      case 'artist-new': case 'artist-capture': case 'artist-copy':
+        if (!await discardArtistChanges()) break;
+        if (target.dataset.action === 'artist-copy') artistDraft({ ...artistUI.draft, id: randomUUID(), name: `${artistUI.draft?.name || '画风'} 副本`.slice(0, 40) });
+        else if (target.dataset.action === 'artist-capture') {
+          const params = state.provider === 'comfyui' ? state.comfyui.params : state[state.provider];
+          artistDraft({ ...emptyArtist(), target: state.provider, artist: state.provider === 'comfyui' ? params.positive : params.artist, negative: params.negative });
+        } else artistDraft(emptyArtist());
+        render(); break;
+      case 'artist-save':
+        try { saveArtistDraft(); } catch (error) { toast(error.message); } break;
+      case 'artist-delete':
+        if (window.confirm(`删除“${artistUI.draft.name}”？`)) {
+          const previous = state.artistLibrary;
+          state.artistLibrary = previous.filter((entry) => entry.id !== artistUI.draft.id);
+          try { persist(); artistDraft(state.artistLibrary[0] || null); artistUI.dirty = false; render(); }
+          catch (error) { state.artistLibrary = previous; toast(error.message); }
+        } break;
+      case 'artist-import': artistFileInput('import'); break;
+      case 'artist-export': downloadJson('linghuashi-artists.json', { format: 'linghuashi-artists', version: 1, entries: state.artistLibrary }); break;
+      case 'artist-preview': artistFileInput('preview'); break;
+      case 'artist-preview-clear': artistUI.draft.preview = ''; artistUI.dirty = true; render(); break;
+      case 'artist-apply':
+        try { applyArtistEntry(artistUI.draft); } catch (error) { toast(error.message); } break;
+      case 'artist-quick-apply':
+        try { applyArtistEntry(state.artistLibrary.find((entry) => entry.id === host.querySelector('[data-artist-quick]').value),
+          { mode: 'replace', quality: false, negative: false }); } catch (error) { toast(error.message); } break;
+      case 'assistant-generate': case 'assistant-translate': case 'assistant-polish':
+        assistantUI.binding = null; assistantUI.requestId = null;
+        delete state.assistantBinding; delete state.assistantRequestId;
+        try { await runPromptAssistant(target.dataset.action.replace('assistant-', '')); }
+        catch (error) { toast(error.message); } break;
+      case 'assistant-illustrate':
+        if (!isInstalled()) { toast('当前消息配图需要在酒馆内使用'); break; }
+        chatPost('linghuashi:chat-current-assist', {}); break;
+      case 'assistant-use-current': {
+        const snapshot = captureSnapshot(state);
+        state.assistantInput = (snapshot.params || snapshot.config.params).positive;
+        persist(); render(true); break;
+      }
+      case 'assistant-example':
+        if (!state.assistantInput.trim()) {
+          state.assistantInput = '一位穿着白色连衣裙的成年旅行者坐在花园树下读书，清晨的阳光透过树叶，画面温柔安静。';
+          persist(); render(true); revealSetting('[data-assistant-input]');
+        }
+        break;
+      case 'assistant-cancel': assistantUI.controller?.abort(); break;
+      case 'assistant-select-shot': {
+        const index = Number(target.dataset.shotIndex);
+        if (Number.isInteger(index) && illustrationPlans(state.assistantDraft)[index]) {
+          assistantUI.illustrationIndex = index; render(true);
+        }
+        break;
+      }
+      case 'assistant-toggle-key':
+        assistantUI.keyVisible = !assistantUI.keyVisible; refreshAssistantStatus(); break;
+      case 'assistant-toggle-models':
+        assistantUI.modelsOpen = !assistantUI.modelsOpen; refreshAssistantModels(); break;
+      case 'assistant-pick-model': {
+        const model = assistantUI.models[Number(target.dataset.assistantModelIndex)];
+        if (!model) break;
+        const key = state.assistant.source === 'api' ? 'model' : 'tavernModel';
+        state.assistant[key] = model; loadAssistantCompatibility();
+        assistantUI.modelsOpen = false; render(true); break;
+      }
+      case 'assistant-compat-save':
+        try {
+          state.assistant.compatibilityProfiles = saveCompatibility(state.assistant, assistantCompatibilityTarget(), state.assistant);
+          persist(); render(true); toast('已保存当前接口与模型的兼容设置');
+        } catch (error) { toast(error.message); } break;
+      case 'assistant-compat-remove':
+        state.assistant.compatibilityProfiles = state.assistant.compatibilityProfiles.filter((row) =>
+          row.identity !== compatibilityIdentity(state.assistant, assistantCompatibilityTarget()));
+        loadAssistantCompatibility(); render(true); break;
+      case 'assistant-compat-text':
+        state.assistant.responseMode = 'text';
+        try { state.assistant.compatibilityProfiles = saveCompatibility(state.assistant, assistantCompatibilityTarget(), state.assistant); }
+        catch {}
+        persist(); render(true); toast('已切换普通 JSON 回复，可手动重新分析'); break;
+      case 'assistant-budget-increase':
+        state.assistant.maxTokens = Math.min(131072, state.assistant.outputLimit || 131072, Math.max(8000, state.assistant.maxTokens * 2));
+        persist(); render(true); toast('输出上限已调整，请核对模型限制后手动重试'); break;
+      case 'assistant-models': await fetchAssistantModels(); break;
+      case 'assistant-budget-preview':
+        try { await assistantPresetPanel.preview(); render(true); toast('已按当前描述与预设估算，未调用模型'); }
+        catch (error) { toast(error.message); } break;
+      case 'assistant-task-prompts': taskPromptPanel.open(state.assistantInput.trim() ? 'generate' : 'illustrate'); break;
+      case 'assistant-network': networkDiagnosticPanel.open(networkContext('assistant')); break;
+      case 'assistant-apply':
+        try { applyAssistantToParameters(); render(); } catch (error) { toast(error.message); } break;
+      case 'assistant-workshop':
+        try { applyAssistantToParameters(); openWorkflowPage('generate', 'assistant'); } catch (error) { toast(error.message); }
+        break;
+      case 'assistant-comic':
+        try {
+          await comicPanel.fromAssistant(state.assistantInput.trim() || currentAssistantPlan()?.scene || '');
+          openWorkflowPage('comic', 'assistant');
+        } catch (error) { toast(error.message); }
+        break;
+      case 'assistant-copy':
+        try { await navigator.clipboard.writeText(currentAssistantPlan()?.positive || ''); toast('提示词已复制'); }
+        catch { toast('复制失败，请选择提示词后复制'); } break;
+      case 'assistant-save-draft':
+        if (assistantUI.binding) chatPost('linghuashi:chat-draft', {
+          requestId: assistantUI.requestId, binding: assistantUI.binding,
+          plan: { ...state.assistantDraft, shouldDraw: Boolean(state.assistantDraft?.positive?.trim()) },
+        }); break;
+      case 'assistant-draw': {
+        const plan = currentAssistantPlan();
+        if (!plan?.positive.trim()) { toast('请先准备提示词'); break; }
+        if (assistantUI.binding) {
+          chatPost('linghuashi:chat-draft-submit', { requestId: assistantUI.requestId, binding: assistantUI.binding,
+            illustrationIndex: assistantUI.illustrationIndex || 0,
+            plan: { ...(assistantUI.illustrationIndex ? plan : state.assistantDraft), shouldDraw: true } });
+        } else try { await enqueueGeneration(undefined, { plan, options: normalizeAssistant(state.assistant) }); }
+        catch (error) { generationIssue = error.message; openWorkflowPage('generate', 'assistant'); revealSetting('.generation-issue'); }
+        break;
+      }
+      case 'assistant-draw-all':
+        if (assistantUI.binding?.slot === 0 && state.assistantDraft?.illustrations?.length > 1) {
+          chatPost('linghuashi:chat-draft-submit', { requestId: assistantUI.requestId, binding: assistantUI.binding,
+            plan: { ...state.assistantDraft, shouldDraw: true }, allIllustrations: true });
+        }
+        break;
+      case 'sdwebui-fetch-models': void checkConnection(true); break;
+      case 'sdwebui-load-preset':
+        try { await loadCurrentPreset('sdwebui', state.sdwebuiPresetId); } catch (error) { toast(error.message); render(); } break;
+      case 'sdwebui-save-as': openSDWebUIPresetDialog(); break;
+      case 'sdwebui-save-preset':
+        commitSDWebUIFields();
+        if (state.sdwebuiPresetId === 'default') openSDWebUIPresetDialog();
+        else try { await saveCurrentPreset('sdwebui'); toast('预设已更新'); } catch (error) { toast(error.message); }
+        break;
+      case 'sdwebui-delete-preset': openSDWebUIPresetDialog(true); break;
+      case 'sdwebui-swap-size':
+        [state.sdwebui.width, state.sdwebui.height] = [state.sdwebui.height, state.sdwebui.width]; commitSDWebUIFields(); break;
+      case 'sdwebui-insert-lora':
+        try {
+          const token = loraPrompt(host.querySelector('[data-sdwebui-lora]').value, Number(host.querySelector('[data-sdwebui-lora-weight]').value));
+          if (state.sdwebui.positive.length + token.length + 2 > 12000) throw new Error('正向提示词超过 12000 字符');
+          state.sdwebui.positive = [state.sdwebui.positive.trim(), token].filter(Boolean).join(', '); commitSDWebUIFields();
+        } catch (error) { toast(error.message); }
+        break;
+      case 'openai-fetch-models': checkConnection(true); break;
+      case 'openai-toggle-models':
+        openaiModelUI.open = !openaiModelUI.open; updateOpenAIModelList(); break;
+      case 'openai-select-model': {
+        const model = target.dataset.openaiModelId;
+        state.openai.model = model;
+        commitOpenAIFields();
+        render(true);
+        copyOpenAIModel(model, true);
+        break;
+      }
+      case 'openai-copy-model': copyOpenAIModel(target.dataset.openaiModelId); break;
+      case 'openai-request-preview': showOpenAIRequest(); break;
+      case 'toggle-key': {
+        keyVisible = !keyVisible;
+        const input = host.querySelector('[data-transient="key"]');
+        input.type = keyVisible ? 'text' : 'password';
+        target.title = target.ariaLabel = keyVisible ? '隐藏秘钥' : '显示秘钥';
+        target.setAttribute('aria-pressed', String(keyVisible));
+        target.innerHTML = icon(keyVisible ? 'eye-off' : 'eye'); paintIcons(); break;
+      }
+      case 'openai-load-preset':
+        try { await loadCurrentPreset('openai', state.openaiPresetId); } catch (error) { toast(error.message); render(); } break;
+      case 'openai-save-as': openOpenAIPresetDialog(); break;
+      case 'openai-save-preset':
+        commitOpenAIFields();
+        if (state.openaiPresetId === 'default') openOpenAIPresetDialog();
+        else {
+          try { await saveCurrentPreset('openai'); toast('预设已更新'); }
+          catch (error) { toast(error.message); }
+        }
+        break;
+      case 'openai-delete-preset': openOpenAIPresetDialog(true); break;
+      case 'openai-swap-size':
+        [state.openai.width, state.openai.height] = [state.openai.height, state.openai.width]; commitOpenAIFields(); break;
+      case 'drawing-import': importDrawingFiles(); break;
+      case 'storage-migrate': void migrateBrowserImages(); break;
+      case 'storage-audit':
+        void drawingOperation(async () => {
+          const result = await storageRequest('audit');
+          state.storageStatus = result.missing.length || result.orphans || result.pendingFiles
+            ? `缺失文件 ${result.missing.length} 张 · 无对应记录文件 ${result.orphans} 个 · 待删除 ${result.pendingFiles} 张`
+            : '检查完成 · 图片记录与磁盘文件一致';
+          await reloadDrawings();
+          state.storageStatus = result.missing.length || result.orphans || result.pendingFiles
+            ? `缺失文件 ${result.missing.length} 张 · 无对应记录文件 ${result.orphans} 个 · 待删除 ${result.pendingFiles} 张`
+            : '检查完成 · 图片记录与磁盘文件一致';
+          toast(state.storageStatus);
+        }); break;
+      case 'drawing-refresh': drawingOperation(async () => { await reloadDrawings(); toast('图片列表已刷新'); }); break;
+      case 'drawing-reindex': drawingOperation(async () => { await reloadDrawings(true); toast('已重新核对图库参数'); }); break;
+      case 'drawing-reset-filters':
+        drawingUI.filters = { source: 'all', start: '', end: '', search: '', favoriteOnly: false };
+        drawingUI.page = 1; drawingUI.error = ''; drawingUI.selection.clear(); render(); break;
+      case 'drawing-multiselect':
+        drawingUI.multiselect = !drawingUI.multiselect;
+        if (!drawingUI.multiselect) drawingUI.selection.clear();
+        render(); break;
+      case 'drawing-review': {
+        const groups = new Set(drawingTargets().map(versionGroupId));
+        viewerUI.ids = drawingGroups(drawings).filter((row) => groups.has(versionGroupId(row))).map(versionGroupId);
+        viewerUI.index = 0; viewerUI.imageId = '';
+        viewerUI.review = true; viewerUI.details = false; viewerUI.zoom = false;
+        if (viewerUI.ids.length) showDrawingViewer();
+        break;
+      }
+      case 'drawing-clear-selection': drawingUI.selection.clear(); render(); break;
+      case 'drawing-export': case 'drawing-download-all': {
+        const items = drawingTargets();
+        const withParameters = target.dataset.action === 'drawing-export';
+        drawingOperation(async () => {
+          const loaded = [];
+          if (items.reduce((sum, row) => sum + row.blob.size, 0) > 200 * 1024 * 1024) throw new Error('导出包超过 200 MB，请分批导出');
+          for (const item of items) loaded.push({ ...await drawingLibrary.materialize(item), rating: item.rating });
+          saveBlob(await exportDrawings(loaded, withParameters, drawingUI.exportOptions), withParameters ? 'linghuashi-drawings.zip' : 'linghuashi-images.zip');
+          toast(withParameters ? `已导出 ${items.length} 张原图及参数` : `已打包 ${items.length} 张原图`);
+        }); break;
+      }
+      case 'drawing-delete': {
+        const filtered = filterDrawings(drawings, drawingUI.filters);
+        const selected = drawingUI.selection.size ? drawings.filter((row) => drawingUI.selection.has(row.id)) : drawingPage(filtered, drawingUI.page, drawingUI.pageSize).items;
+        const groups = new Set(selected.map(versionGroupId));
+        const ids = drawings.filter((row) => groups.has(versionGroupId(row))).map((row) => row.id);
+        deleteDrawingsDialog(ids, drawingUI.selection.size ? '删除所选图组' : '删除本页图组'); break;
+      }
+      case 'drawing-prev-page': drawingUI.page--; render(); break;
+      case 'drawing-next-page': drawingUI.page++; render(); break;
+      case 'workflow-import': importComfyWorkflow(); break;
+      case 'workflow-export': exportComfyWorkflow(); break;
+      case 'comfy-save-as': openComfyPresetDialog(); break;
+      case 'comfy-save-preset':
+        commitComfyFields();
+        if (state.comfyPresetId === 'default') openComfyPresetDialog();
+        else {
+          try { await saveCurrentPreset('comfyui'); toast('工作流预设已更新'); }
+          catch (error) { toast(error.message); }
+        }
+        break;
+      case 'comfy-load-preset':
+        try { await loadCurrentPreset('comfyui', state.comfyPresetId); } catch (error) { toast(error.message); render(); } break;
+      case 'comfy-delete-preset': openComfyPresetDialog(true); break;
+      case 'comfy-auto-map':
+        changeComfy(() => { state.comfyui.mapping = autoMapWorkflow(state.comfyui.graph); }, '已重新识别节点映射，当前参数已保留');
+        break;
+      case 'comfy-random-seed':
+        state.comfyui.params.seed = crypto.getRandomValues(new Uint32Array(1))[0]; commitComfyFields(); break;
+      case 'comfy-locate-node': {
+        const mapping = state.comfyui.mapping[target.dataset.mappingKey];
+        if (!mapping) { toast('此参数尚未映射'); break; }
+        const details = host.querySelector('.advanced-node-list');
+        if (details) details.open = true;
+        host.querySelectorAll('[data-node-row]').forEach((row) => {
+          row.classList.toggle('is-located', row.dataset.nodeRow === mapping.node);
+          if (row.dataset.nodeRow === mapping.node) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        });
+        break;
+      }
+      case 'nai-load-preset':
+        try { await loadCurrentPreset('novelai', state.novelaiPresetId); } catch (error) { toast(error.message); render(); } break;
+      case 'nai-save-as': commitNovelAIFields(); openNovelAIPresetDialog(); break;
+      case 'nai-save-preset':
+        commitNovelAIFields();
+        if (state.novelaiPresetId === 'default') openNovelAIPresetDialog();
+        else {
+          try { await saveCurrentPreset('novelai'); toast('预设已更新'); }
+          catch (error) { toast(error.message); }
+        }
+        break;
+      case 'nai-delete-preset': openNovelAIPresetDialog('delete'); break;
+      case 'nai-swap-size':
+        [state.novelai.width, state.novelai.height] = [state.novelai.height, state.novelai.width]; commitNovelAIFields(); break;
+      case 'nai-random-seed':
+        state.novelai.seed = crypto.getRandomValues(new Uint32Array(1))[0]; commitNovelAIFields(); break;
+      case 'generate': generate(); break;
+      case 'profile-apply-outfit':
+        try {
+          if (profileUI.dirty) throw new Error('角色档案还有未保存修改，请先保存或撤销');
+          updateOutfitDraft(target);
+          applySelectedOutfit(target.dataset.profileId);
+        } catch (error) { toast(error.message); }
+        break;
+      case 'profile-discard-outfit':
+        delete profileUI.outfitDrafts[target.dataset.profileId];
+        render(true); break;
+      case 'creation-preview':
+        try {
+          pendingSave.flush();
+          const snapshot = captureSnapshot(state);
+          creationPreviewState = { revision: currentCreationRevision(), preview: previewCreation(snapshot, {
+            profiles: effectiveProfiles(state.characterProfiles, currentChat().key),
+            processing: state.promptProcessing, tagLibrary: state.tagLibrary,
+            ...creationSources(), pendingOutfits: pendingOutfitDrafts(snapshot.characterScene, profileUI.outfitDrafts).map((row) => row.name),
+          }) };
+          render(true); revealSetting('.creation-preview');
+        } catch (error) { toast(error.message); }
+        break;
+      case 'creation-assistant': {
+        const snapshot = captureSnapshot(state), params = snapshot.params || snapshot.config.params;
+        if (!state.assistantInput.trim() && !state.assistantDraft) {
+          state.assistantInput = snapshot.characterScene?.applied ? snapshot.characterScene.basePositive : params.positive;
+          persist();
+        } else toast('助手已有草稿，已保留原内容');
+        openWorkflowPage('assistant', 'generate'); revealSetting('[data-assistant-input]'); break;
+      }
+      case 'clear-cache':
+        deleteDrawingsDialog(drawings.map((item) => item.id), state.cacheLocation === 'server' ? '清空服务器图片' : '清空浏览器图片'); break;
+      case 'cancel': taskQueue.cancel(activeJobId); toast('已停止等待或取图；服务已开始的生成可能继续运行'); break;
+      case 'task-cancel': taskQueue.cancel(target.dataset.task); break;
+      case 'task-retry':
+        await libraryReady;
+        activeJobId = target.dataset.task; taskQueue.retry(activeJobId); break;
+      case 'task-refresh': await refreshTasks(); break;
+      case 'task-clear':
+        try { const result = await taskPersistence.clear(); await refreshTasks(); toast(`已清理 ${result.cleared} 条已结束记录，已保存图片保留`); }
+        catch (error) { toast(error.message); }
+        break;
+      case 'task-parameters': {
+        const job = taskQueue.jobs.find((item) => item.id === target.dataset.task);
+        if (job) { restoreSnapshot(state, job.plan.snapshot); state.page = 'connection'; persist(); render(); }
+        break;
+      }
+      case 'task-export':
+        saveBlob(new Blob([JSON.stringify(taskQueue.records(), null, 2)], { type: 'application/json' }), 'linghuashi-requests.json'); break;
+      case 'viewer':
+        if (drawingUI.multiselect && state.page === 'gallery' && target.dataset.image) {
+          const id = target.dataset.image;
+          if (drawingUI.selection.has(id)) drawingUI.selection.delete(id); else drawingUI.selection.add(id);
+          render();
+        } else openViewer(target.dataset.image);
+        break;
+      case 'download': downloadImage(target.dataset.image); break;
+      case 'favorite': toggleDrawingFavorite(target.dataset.image); break;
+      case 'random-seed': state.seed = Math.floor(Math.random() * 1000000000); persist(); render(); break;
+      case 'organize': state.prompt = [...new Set(state.prompt.split(',').map((tag) => tag.trim()).filter(Boolean))].join(', '); persist(); render(); toast('提示词已整理'); break;
+      case 'test-connection': checkConnection(true); break;
+      case 'network-diagnostics': debugToolsPanel.selectProvider(state.provider); showPage('debug'); break;
+      case 'debug-tools': showPage('debug'); break;
+      case 'save-character': case 'save-character-use':
+        try {
+          if (!profileUI.draft?.name.trim()) throw new Error('请填写档案名称');
+          if (profileUI.scope === 'chat' && profileUI.chatKey !== currentChat().key) throw new Error('聊天已切换，请重新选择档案后保存');
+          const join = target.dataset.action === 'save-character-use', chat = currentChat();
+          const params = state.provider === 'comfyui' ? state.comfyui.params : state[state.provider];
+          state.characterProfiles = join ? saveProfileAndSelect(state.characterProfiles, profileUI.draft, {
+            chatKey: chat.key || '', avatars: chat.avatars || [], scope: profileUI.scope,
+            limit: characterLimit(state.provider, params.model),
+          }) : saveProfile(state.characterProfiles, profileUI.draft, profileUI.scope === 'chat' ? chat.key : '');
+          useLiveCharacterScene(); loadProfileDraft(); persist(); render(); toast(join ? '角色档案已保存并加入出场' : '角色档案已保存');
+        } catch (error) { profileUI.error = error.message; render(); } break;
+      case 'profile-ai-open':
+        if (!await discardProfileChanges()) break;
+        loadProfileDraft(); await profileAI.open(); break;
+      case 'profile-ai-refresh': await refreshProfileFromStory(); break;
+      case 'save-preset': persist(); toast('已保存'); break;
+      case 'edit-prompt': editPrompt = !editPrompt; render(); break;
+      case 'floating-menu': floatingMenu?.toggle(); break;
+      case 'settings': showSettings(); break;
+      case 'console':
+        config = { ...config, surface: 'console' };
+        state.page = 'generate'; persist(); render();
+        if (window.parent !== window) postWindowMessage(window.parent, { type: 'draw-lab:surface', surface: 'console' });
+        break;
+      case 'new-character':
+        if (!await discardProfileChanges()) break;
+        profileUI.scope = 'global';
+        profileUI.draft = normalizeProfile({ id: randomUUID(), name: '新角色' });
+        profileUI.chatKey = currentChat().key || '';
+        state.page = 'characters';
+        profileUI.dirty = true; profileUI.error = ''; render(); host.querySelector('[data-profile-field="name"]')?.focus(); break;
+      case 'profiles-open': showPage('characters'); break;
+      case 'profile-reference-upload': host.querySelector('[data-profile-reference-file]')?.click(); break;
+      case 'profile-reference-remove':
+        if (profileUI.draft) { profileUI.draft.reference = null; profileUI.dirty = true; render(); }
+        break;
+      case 'profile-reference-use':
+        if (profileUI.draft?.reference) {
+          state.provider = 'novelai';
+          state.novelai.advanced = { ...state.novelai.advanced, mode: 'reference', referenceKind: 'character', character: profileUI.draft.reference };
+          persist(); showPage('generate');
+        }
+        break;
+      case 'profile-refresh-cards': await refreshProfileCards(); break;
+      case 'profile-live-scene': useLiveCharacterScene(); persist(); render(); break;
+      case 'profile-position': {
+        updateProfileParticipant({ dataset: { profileId: target.dataset.profileId, participantField: 'position' },
+          value: target.dataset.position });
+        render(true); break;
+      }
+      case 'profile-layout': {
+        const scene = captureSnapshot(state).characterScene;
+        if (!scene) break;
+        const arranged = arrangeCharacterScene(scene, target.dataset.layout);
+        if (state.characterSceneOverride) saveCharacterSceneOverride(arranged);
+        else saveProfileParticipants(arranged.entries.map(({ profile, ...entry }) => entry));
+        render(true); break;
+      }
+      case 'profile-discard': loadProfileDraft(); render(); break;
+      case 'profile-new-outfit': {
+        const draft = profileUI.draft;
+        if (!draft || draft.outfits.length >= 20) break;
+        const outfit = { id: randomUUID(), name: '新服装', prompt: '' };
+        draft.outfits.push(outfit); if (!draft.defaultOutfitId) draft.defaultOutfitId = outfit.id;
+        profileUI.dirty = true; render(); break;
+      }
+      case 'profile-delete-outfit':
+        if (profileUI.draft) {
+          profileUI.draft.outfits = profileUI.draft.outfits.filter((item) => item.id !== target.dataset.outfitId);
+          if (profileUI.draft.defaultOutfitId === target.dataset.outfitId) profileUI.draft.defaultOutfitId = '';
+          profileUI.dirty = true; render();
+        } break;
+      case 'profile-clear-override': {
+        if (!await discardProfileChanges()) break;
+        const key = currentChat().key, chat = state.characterProfiles.chats.find((item) => item.chatKey === key);
+        state.characterProfiles = updateProfileChat(state.characterProfiles, key, {
+          overrides: chat.overrides.filter((item) => item.id !== profileUI.draft.id),
+        });
+        useLiveCharacterScene(); loadProfileDraft(); persist(); render(); break;
+      }
+      case 'profile-delete': {
+        const profile = profileUI.draft;
+        if (profile && await confirmProfileDeletion(profile.name)) {
+          state.characterProfiles = deleteProfile(state.characterProfiles, profile.id);
+          useLiveCharacterScene(); loadProfileDraft(); persist(); render(); toast('档案已删除');
+        } break;
+      }
+      case 'profile-export':
+        downloadJson('灵画师-角色档案.json', { version: 1, profiles: profileUI.scope === 'chat'
+          ? effectiveProfiles(state.characterProfiles, currentChat().key) : state.characterProfiles.profiles }); break;
+      case 'profile-import': host.querySelector('[data-profile-import]')?.click(); break;
+      case 'new-style': toast('预设编辑区已打开'); host.querySelector('[data-transient="style-tags"]')?.focus(); break;
+      case 'more': toast('当前为界面预览'); break;
+      case 'copy-message':
+        navigator.clipboard?.writeText('薄雾在湖面缓缓散开，远山映在水里。').then(() => toast('消息已复制')).catch(() => toast('复制失败'));
+        break;
+    }
+  });
+  host.addEventListener('keydown', (event) => {
+    if (event.target.matches('[data-openai="model"]') && event.key === 'ArrowDown') {
+      event.preventDefault();
+      openaiModelUI.open = true;
+      updateOpenAIModelList();
+      host.querySelector('[data-openai-model-search]')?.focus({ preventScroll: true });
+    } else if (event.key === 'Escape' && event.target.closest('.openai-model-panel')) {
+      event.preventDefault();
+      openaiModelUI.open = false;
+      updateOpenAIModelList();
+      host.querySelector('[data-action="openai-toggle-models"]')?.focus({ preventScroll: true });
+    }
+  });
+  host.addEventListener('input', (event) => {
+    if (creationPreviewState) queueMicrotask(refreshCreationPreviewState);
+    if (event.target.dataset.outfitField && updateOutfitDraft(event.target)) return;
+    if (event.target.dataset.artistField && artistUI.draft) {
+      artistUI.draft[event.target.dataset.artistField] = event.target.type === 'checkbox' ? event.target.checked : event.target.value;
+      artistUI.dirty = true; return;
+    }
+    if (event.target.matches('[data-artist-search]')) {
+      artistUI.search = event.target.value;
+      replaceStatusHTML('.artist-directory', renderArtistDirectory(state, artistUI));
+      return;
+    }
+    if (event.target.dataset.profileField && profileUI.draft) {
+      if (event.target.type === 'checkbox' || event.target.tagName === 'SELECT') return;
+      profileUI.draft[event.target.dataset.profileField] = event.target.value;
+      profileUI.dirty = true; return;
+    }
+    if (event.target.dataset.profileOutfit && profileUI.draft) {
+      const outfit = profileUI.draft.outfits.find((item) => item.id === event.target.dataset.profileOutfit);
+      if (outfit) { outfit[event.target.dataset.outfitField] = event.target.value; profileUI.dirty = true; }
+      return;
+    }
+    if (event.target.dataset.participantField && event.target.tagName !== 'SELECT') {
+      try { updateProfileParticipant(event.target); } catch (error) { toast(error.message); }
+      return;
+    }
+    if (event.target.dataset.assistantCharacter && state.assistantDraft) {
+      const shot = illustrationPlans(state.assistantDraft)[assistantUI.illustrationIndex || 0];
+      const entry = shot.characters?.find((item) => item.profileId === event.target.dataset.assistantCharacter);
+      if (entry) {
+        const key = event.target.dataset.characterResult;
+        entry[key] = event.target.value;
+        const sceneEntry = state.assistantDraft.characterScene?.entries.find((item) => item.profileId === entry.profileId);
+        if (sceneEntry && !state.assistantDraft.illustrations && ['action', 'expression'].includes(key)) sceneEntry[key] = event.target.value;
+        syncPrimaryIllustration(state.assistantDraft);
+        pendingSave.schedule();
+        assistantLintPanel.render();
+        assistantHistoryPanel.render();
+      }
+      return;
+    }
+    if (event.target.matches('[data-assistant-model-search]')) {
+      assistantUI.modelsQuery = event.target.value;
+      refreshAssistantModels(); return;
+    }
+    if (event.target.matches('[data-assistant-key]')) {
+      apiEditRevision++;
+      resetAssistantModels();
+      assistantUI.key = event.target.value; assistantUI.keyDirty = true; assistantUI.keyRevision++;
+      assistantUI.keyStatus = '秘钥待保存'; assistantUI.keyError = false; clearTimeout(assistantUI.keyTimer);
+      assistantUI.keyTimer = setTimeout(() => { void saveAssistantKey().catch(() => {}); }, 400);
+      return;
+    }
+    if (event.target.matches('[data-assistant-input]')) {
+      state.assistantInput = event.target.value; pendingSave.schedule(); assistantHistoryPanel.render(); return;
+    }
+    if (event.target.dataset.assistantResult && state.assistantDraft) {
+      const shot = illustrationPlans(state.assistantDraft)[assistantUI.illustrationIndex || 0];
+      shot[event.target.dataset.assistantResult] = event.target.value;
+      syncPrimaryIllustration(state.assistantDraft); pendingSave.schedule();
+      assistantLintPanel.render();
+      assistantHistoryPanel.render();
+      assistantScenePanel.render();
+      for (const action of ['assistant-draw', 'assistant-apply', 'assistant-copy']) {
+        const command = host.querySelector(`[data-action="${action}"]`);
+        if (command) command.disabled = !currentAssistantPlan()?.positive.trim() || assistantUI.busy || action === 'assistant-draw' && !state.enabled;
+      }
+      return;
+    }
+    if (event.target.dataset.assistant) {
+      const key = event.target.dataset.assistant;
+      if (['endpoint', 'apiTransport'].includes(key)) { apiEditRevision++; resetAssistantModels(); }
+      if (key === 'source') resetAssistantModels();
+      state.assistant[key] = event.target.type === 'checkbox' ? event.target.checked
+        : event.target.type === 'number' ? Number(event.target.value) : event.target.value;
+      state.assistant = normalizeAssistant(state.assistant); pendingSave.schedule(); return;
+    }
+    if (event.target.matches('[data-openai-model-search]')) {
+      openaiModelUI.query = event.target.value;
+      updateOpenAIModelList(); return;
+    }
+    const sdKey = event.target.dataset.sdwebui;
+    if (sdKey && Object.hasOwn(SDWEBUI_DEFAULTS, sdKey) && !event.target.disabled) {
+      state.sdwebui[sdKey] = event.target.type === 'checkbox' ? event.target.checked
+        : typeof SDWEBUI_DEFAULTS[sdKey] === 'number' ? Number(event.target.value) : event.target.value;
+      persist(); updateSDWebUIDirty(); return;
+    }
+    const sdConnectionKey = event.target.dataset.sdwebuiConnection;
+    if (['auth', 'username', 'timeout'].includes(sdConnectionKey)) {
+      state.connections.sdwebui[sdConnectionKey] = event.target.value;
+      if (sdConnectionKey === 'auth') credentials.sdwebui.auth = event.target.value;
+      if (sdConnectionKey !== 'timeout') Object.assign(state.connections.sdwebui, { textTaskId: false, imageTaskId: false, progressMode: 'none' });
+      persist(); resetConnection(); updateConnectionStatus(); return;
+    }
+    const openaiKey = event.target.dataset.openai;
+    if (openaiKey && Object.hasOwn(OPENAI_DEFAULTS, openaiKey) && !event.target.disabled) {
+      state.openai[openaiKey] = event.target.type === 'checkbox' ? event.target.checked
+        : event.target.type === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value;
+      persist(); updateOpenAIDirty(); updateConnectionStatus(); return;
+    }
+    const connectionKey = event.target.dataset.openaiConnection;
+    if (['endpoint', 'path', 'timeout'].includes(connectionKey)) {
+      if (connectionKey === 'endpoint') {
+        apiEditRevision++;
+        if (state.assistant.source === 'api') resetAssistantModels();
+      }
+      state[{ endpoint: 'openaiEndpoint', path: 'openaiPath', timeout: 'openaiTimeout' }[connectionKey]] = event.target.value;
+      persist(); checkConnection(false, connectionKey !== 'endpoint'); return;
+    }
+    const comfyKey = event.target.dataset.comfy;
+    if (comfyKey && Object.hasOwn(COMFY_FIELDS, comfyKey) && !event.target.disabled) {
+      state.comfyui.params[comfyKey] = event.target.type === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value;
+      persist(); updateComfyDirty();
+      return;
+    }
+    const naiKey = event.target.dataset.nai;
+    if (naiKey && Object.hasOwn(NOVELAI_DEFAULTS, naiKey)) {
+      state.novelai[naiKey] = event.target.type === 'checkbox' ? event.target.checked
+        : event.target.type === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value;
+      if (event.target.type === 'checkbox') commitNovelAIFields();
+      else { persist(); updateNovelAIDirty(); }
+      return;
+    }
+    const transient = event.target.dataset.transient;
+    if (['key', 'endpoint'].includes(transient)) {
+      credentials[state.provider][transient] = event.target.value;
+      if (state.provider === 'sdwebui') Object.assign(state.connections.sdwebui, { textTaskId: false, imageTaskId: false, progressMode: 'none' });
+      if (transient === 'key') {
+        if (state.provider === 'openai') {
+          apiEditRevision++;
+          if (state.assistant.source === 'api') resetAssistantModels();
+        }
+        const current = credentialState[state.provider];
+        current.dirty = true; current.revision++; current.error = false;
+        current.message = '秘钥待保存';
+        scheduleConnectionSave(state.provider);
+        updateCredentialStatus();
+      } else { persist(); updateCredentialStatus(); }
+      resetConnection();
+      const route = state.provider === 'novelai'
+        ? resolveNovelAIService(credentials.novelai.key, credentials.novelai.endpoint)
+        : null;
+      if (route?.kind === 'identify') {
+        connectionStatus = { message: '等待自动识别蛋糕 / 砂糖秘钥…', tone: 'neutral' };
+        connectionTimer = setTimeout(() => checkConnection(), 800);
+        updateConnectionStatus();
+      } else {
+        checkConnection();
+      }
+      return;
+    }
+    const key = event.target.dataset.setting;
+    if (!key || !Object.hasOwn(state, key)) return;
+    state[key] = event.target.type === 'checkbox' ? event.target.checked : event.target.type === 'number' ? Number(event.target.value) : event.target.value;
+    if (Object.hasOwn(SETTINGS_DEFAULTS, key) && !['triggerPrefix', 'triggerSuffix'].includes(key)) Object.assign(state, normalizeSettings(state));
+    if (key === 'provider') { keyVisible = false; resetConnection(); checkConnection(); }
+    persist();
+    if (['triggerPrefix', 'triggerSuffix'].includes(key)) updateTriggerFormat();
+    if (key === 'enabled' || key === 'floatingBall') {
+      if (!state.enabled) {
+        for (const request of chatRequests.values()) {
+          if (!request.jobId) receiveChatCommand({ type: 'linghuashi:chat-cancel', requestId: request.requestId });
+        }
+        taskQueue.cancelAll();
+        runtimeState = 'ready';
+        document.getElementById('overlay-root').replaceChildren();
+      }
+      if (state.enabled) taskQueue.pump();
+      if (key === 'enabled') void syncStoragePolicy().catch((error) => toast(error.message));
+      render();
+      return;
+    }
+    if (key === 'prompt') host.querySelectorAll('[data-prompt-count]').forEach((node) => { node.textContent = `${state.prompt.length} 字符`; });
+    if (key === 'search') {
+      const focus = event.target;
+      const position = focus.selectionStart;
+      render();
+      const input = host.querySelector('[data-setting="search"]');
+      input.focus(); input.setSelectionRange(position, position);
+    }
+  });
+  host.addEventListener('toggle', (event) => {
+    if (event.target.matches('.sdwebui-advanced') && host.contains(event.target)) sdwebuiAdvancedOpen = event.target.open;
+    if (event.target.matches('.openai-advanced') && host.contains(event.target)) openaiAdvancedOpen = event.target.open;
+    if (event.target.matches('.openai-transport') && host.contains(event.target)) openaiTransportOpen = event.target.open;
+    if (event.target.matches('.endpoint-options') && host.contains(event.target)) addressExpanded = event.target.open;
+    if (event.target.matches('.nai-advanced') && host.contains(event.target)) novelaiAdvancedOpen = event.target.open;
+    for (const key of ['advanced', 'mapping', 'auth']) {
+      if (event.target.matches(`.comfy-${key}`) && host.contains(event.target)) comfyExpanded[key] = event.target.open;
+    }
+  }, true);
+  host.addEventListener('change', async (event) => {
+    if (creationPreviewState) queueMicrotask(refreshCreationPreviewState);
+    if (event.target.dataset.outfitField && updateOutfitDraft(event.target)) {
+      if (event.target.tagName === 'SELECT') render(true);
+      return;
+    }
+    if (event.target.dataset.drawingExport) {
+      drawingUI.exportOptions[event.target.dataset.drawingExport] = event.target.value;
+      return;
+    }
+    if (event.target.matches('[data-profile-reference-file]')) {
+      const draft = profileUI.draft;
+      if (!draft) return;
+      try {
+        const normalized = await normalizeReferenceImage(event.target.files[0]);
+        const asset = await referenceAssets.put(normalized.blob, normalized);
+        if (profileUI.draft === draft) { draft.reference = asset; profileUI.dirty = true; render(true); }
+      } catch (error) { toast(error.message); }
+      return;
+    }
+    if (event.target.dataset.artistField && artistUI.draft) {
+      artistUI.draft[event.target.dataset.artistField] = event.target.type === 'checkbox' ? event.target.checked : event.target.value;
+      artistUI.dirty = true; return;
+    }
+    if (event.target.matches('[data-connection-profile]')) {
+      try { await switchConnectionProfile(event.target.value); } catch (error) { toast(error.message); render(); }
+      return;
+    }
+    if (event.target.matches('[data-preset-binding]')) {
+      state.presetBindings[state.provider] = event.target.value; persist(); updateCredentialStatus(); return;
+    }
+    if (event.target.matches('[data-artist-category], [data-artist-favorites]')) {
+      if (event.target.hasAttribute('data-artist-category')) artistUI.category = event.target.value;
+      else artistUI.favoriteOnly = event.target.checked;
+      render(); return;
+    }
+    if (event.target.matches('[data-artist-mode], [data-artist-quality], [data-artist-negative]')) {
+      if (event.target.hasAttribute('data-artist-mode')) artistUI.mode = event.target.value;
+      else artistUI[event.target.hasAttribute('data-artist-quality') ? 'quality' : 'negative'] = event.target.checked;
+      return;
+    }
+    if (event.target.matches('[data-profile-import]')) { await importProfiles(event.target.files[0]); return; }
+    if (event.target.hasAttribute('data-assistant-cast') && state.assistantDraft) {
+      try {
+        state.assistantDraft = selectIllustrationCharacter(state.assistantDraft, assistantUI.illustrationIndex || 0,
+          event.target.dataset.assistantCast, event.target.checked);
+        pendingSave.flush(); persist(); render(true);
+      } catch (error) { toast(error.message); }
+      return;
+    }
+    if (event.target.dataset.profileField && profileUI.draft) {
+      const key = event.target.dataset.profileField;
+      if (event.target.type === 'checkbox' || event.target.tagName === 'SELECT') {
+        profileUI.draft[key] = event.target.type === 'checkbox' ? event.target.checked : event.target.value;
+        profileUI.dirty = true;
+      }
+      return;
+    }
+    if (event.target.hasAttribute('data-profile-participant') || event.target.hasAttribute('data-profile-auto')
+      || event.target.dataset.participantField) {
+      // Text edits already save on input; replacing the DOM on blur would swallow a navigation click.
+      if (event.target.dataset.participantField && event.target.tagName !== 'SELECT') return;
+      try {
+        if (event.target.hasAttribute('data-profile-auto')) {
+          const chat = currentChat();
+          saveProfileParticipants(event.target.checked ? null : resolveCharacterScene(state.characterProfiles, chat.key, chat.avatars).entries.map(({ profile, ...entry }) => entry));
+        } else if (event.target.hasAttribute('data-profile-participant')) {
+          setProfileParticipant(event.target.dataset.profileParticipant, event.target.checked);
+        } else if (event.target.tagName === 'SELECT') {
+          updateProfileParticipant(event.target);
+        }
+      } catch (error) { toast(error.message); }
+      render(state.page === 'assistant'); return;
+    }
+    if (event.target.matches('[data-assistant-key]')) {
+      try { await saveAssistantKey(); } catch { refreshAssistantStatus(); }
+      return;
+    }
+    if (event.target.dataset.assistant) {
+      const key = event.target.dataset.assistant;
+      if (key === 'endpoint' || key === 'source') {
+        try { await syncAssistantConnection(key === 'endpoint' ? 'assistant' : undefined); }
+        catch (error) { assistantUI.keyStatus = credentialFailure(error).message; assistantUI.keyError = true; }
+      }
+      if (['model', 'tavernModel', 'endpoint', 'source'].includes(key)) { loadAssistantCompatibility(); render(true); }
+      else if (['apiTransport', 'template', 'frequency'].includes(key)) render(true);
+      else if (event.target.type === 'number') event.target.value = state.assistant[key];
+      if (key === 'source' && state.assistant.source === 'tavern' && isInstalled()) void fetchAssistantModels(false);
+      return;
+    }
+    if (event.target.matches('[data-transient="key"]')) {
+      scheduleConnectionSave(state.provider, true); return;
+    }
+    if (event.target.dataset.sdwebui) {
+      commitSDWebUIFields(); return;
+    }
+    if (event.target.dataset.sdwebuiConnection) {
+      persist(); keyVisible = false;
+      if (event.target.dataset.sdwebuiConnection === 'auth') render();
+      else if (event.target.dataset.sdwebuiConnection === 'timeout') event.target.value = state.connections.sdwebui.timeout;
+      return;
+    }
+    if (event.target.matches('[data-sdwebui-preset]')) {
+      try { await loadCurrentPreset('sdwebui', event.target.value); } catch (error) { toast(error.message); render(); }
+      return;
+    }
+    if (event.target.dataset.openai) {
+      const key = event.target.dataset.openai;
+      commitOpenAIFields();
+      if (['size', 'model'].includes(key)) {
+        render();
+        host.querySelector(`[data-openai="${key}"]`)?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (event.target.dataset.openaiConnection) {
+      normalizeOpenAIState(state);
+      const key = event.target.dataset.openaiConnection;
+      event.target.value = state[{ endpoint: 'openaiEndpoint', path: 'openaiPath', timeout: 'openaiTimeout' }[key]];
+      persist();
+      if (key === 'endpoint') {
+        try { await syncAssistantConnection('openai'); } catch { toast('接口同步失败，请重试'); }
+      }
+      checkConnection(false, key !== 'endpoint'); return;
+    }
+    if (event.target.matches('[data-openai-preset]')) {
+      try { await loadCurrentPreset('openai', event.target.value); } catch (error) { toast(error.message); render(); }
+      host.querySelector('[data-openai-preset]')?.focus({ preventScroll: true });
+      return;
+    }
+    if (event.target.matches('[data-drawing-select]')) {
+      const id = event.target.dataset.drawingSelect;
+      if (event.target.checked) drawingUI.selection.add(id); else drawingUI.selection.delete(id);
+      render(); return;
+    }
+    if (event.target.matches('[data-drawing-select-page]')) {
+      const checked = event.target.checked;
+      drawingPage(filterDrawings(drawings, drawingUI.filters), drawingUI.page, drawingUI.pageSize).items.forEach((item) => {
+        if (checked) drawingUI.selection.add(item.id); else drawingUI.selection.delete(item.id);
+      });
+      render(); return;
+    }
+    if (event.target.matches('[data-drawing-page-size]')) {
+      drawingUI.pageSize = Number(event.target.value); drawingUI.page = 1; render(); return;
+    }
+    if (event.target.dataset.comfy) {
+      commitComfyFields();
+      return;
+    }
+    if (event.target.matches('[data-comfy-preset]')) {
+      try { await loadCurrentPreset('comfyui', event.target.value); } catch (error) { toast(error.message); render(); }
+      host.querySelector('[data-comfy-preset]')?.focus({ preventScroll: true });
+      return;
+    }
+    if (event.target.matches('[data-comfy-map]')) {
+      const key = event.target.dataset.comfyMap;
+      const mapping = mappingCandidates(state.comfyui.graph, key).find((item) => item.token === event.target.value);
+      const duplicate = mapping && Object.entries(state.comfyui.mapping).some(([otherKey, item]) => otherKey !== key && item.node === mapping.node && item.input === mapping.input);
+      if (duplicate) { toast('该节点输入已被其他参数使用，请先取消原映射'); render(); return; }
+      changeComfy(() => {
+        if (mapping) {
+          state.comfyui.mapping[key] = { node: mapping.node, input: mapping.input };
+          state.comfyui.params[key] = state.comfyui.graph[mapping.node].inputs[mapping.input];
+          state.comfyui.params = normalizeComfyParams(state.comfyui.params);
+        } else delete state.comfyui.mapping[key];
+      });
+      host.querySelector(`[data-comfy-map="${key}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    if (event.target.matches('[data-comfy-output]')) {
+      state.comfyui.outputNode = event.target.value; persist(); updateComfyDirty(); return;
+    }
+    if (event.target.matches('[data-comfy-auth]')) {
+      credentials.comfyui.auth = event.target.value;
+      persist(); resetConnection(); render(); checkConnection(); return;
+    }
+    if (event.target.matches('[data-comfy-timeout]')) {
+      state.comfyTimeout = Math.max(5, Math.min(120, Math.round(Number(event.target.value) || 15)));
+      event.target.value = state.comfyTimeout; persist(); resetConnection(); updateConnectionStatus(); return;
+    }
+    if (event.target.dataset.nai) {
+      commitNovelAIFields();
+      if (event.target.dataset.nai === 'model') {
+        render();
+        host.querySelector('[data-nai="model"]')?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (event.target.matches('[data-nai-size]')) {
+      const size = NOVELAI_SIZES.find((item) => item.id === event.target.value);
+      if (size) { state.novelai.width = size.width; state.novelai.height = size.height; commitNovelAIFields(); }
+      else host.querySelector('[data-nai="width"]').focus();
+      return;
+    }
+    if (event.target.matches('[data-nai-preset]')) {
+      try { await loadCurrentPreset('novelai', event.target.value); } catch (error) { toast(error.message); render(); }
+      host.querySelector('[data-nai-preset]')?.focus({ preventScroll: true });
+      return;
+    }
+    const key = event.target.dataset.setting;
+    if (['triggerPrefix', 'triggerSuffix'].includes(key)) {
+      Object.assign(state, normalizeSettings(state));
+      event.target.value = state[key];
+      persist(); updateTriggerFormat();
+    } else if (Object.hasOwn(SETTING_LIMITS, key) || ['cacheDirectory', 'cleanupMode', 'cleanupUnit'].includes(key)) {
+      Object.assign(state, normalizeSettings(state));
+      persist(); render();
+      host.querySelector(`[data-setting="${key}"]`)?.focus({ preventScroll: true });
+      if (key.startsWith('cleanup')) void syncStoragePolicy().catch((error) => toast(error.message));
+    } else if (key === 'characterTheme') {
+      render();
+      host.querySelector('[data-setting="characterTheme"]')?.focus({ preventScroll: true });
+    } else if (['provider', 'style', 'favoriteOnly'].includes(key)) render();
+    if (['generationMode', 'queueInterval', 'concurrency'].includes(key)) {
+      try { await taskPersistence.configure(); }
+      catch (error) { toast(`调度设置未能同步：${error.message}`); }
+    }
+    if (['generationMode', 'queueInterval', 'concurrency', 'enabled'].includes(key)) taskQueue.pump();
+  });
+  host.addEventListener('submit', (event) => {
+    if (event.target.matches('[data-drawing-filters]')) {
+      event.preventDefault();
+      const values = new FormData(event.target);
+      const start = String(values.get('start') || '');
+      const end = String(values.get('end') || '');
+      if (start && end && start > end) { drawingUI.error = '开始日期不能晚于结束日期'; render(); return; }
+      drawingUI.filters = { source: String(values.get('source')), start, end, search: String(values.get('search') || ''), favoriteOnly: values.has('favoriteOnly'), chatKey: String(values.get('chatKey') || ''), rating: String(values.get('rating') || '') };
+      drawingUI.page = 1; drawingUI.error = ''; drawingUI.selection.clear(); render();
+      return;
+    }
+    if (!event.target.matches('.chat-composer')) return;
+    event.preventDefault();
+    const input = host.querySelector('#chat-input');
+    const text = input.value.trim();
+    if (!text) return;
+    const article = document.createElement('article');
+    article.className = 'chat-message user-message';
+    article.innerHTML = `<div class="message-avatar">${icon('user-round')}</div><div class="message-body"><div class="message-meta"><strong>你</strong><time>刚刚</time></div><p>${esc(text)}</p></div>`;
+    host.querySelector('.chat-messages').append(article);
+    input.value = ''; article.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); paintIcons();
+  });
+  document.getElementById('overlay-root').addEventListener('click', async (event) => {
+    const action = event.target.closest('button[data-action]')?.dataset.action;
+    if (action === 'close-viewer') closeDrawingViewer();
+    if (action === 'viewer-review') markReviewed(event.target.closest('[data-rating]').dataset.rating);
+    if (action === 'viewer-review-undo') markReviewed('unrated', true);
+    if (action === 'download') downloadImage(event.target.closest('[data-image]')?.dataset.image);
+    if (action === 'viewer-prev' || action === 'viewer-next') {
+      viewerUI.index = (viewerUI.index + (action === 'viewer-prev' ? -1 : 1) + viewerUI.ids.length) % viewerUI.ids.length;
+      viewerUI.imageId = ''; viewerUI.compare = false;
+      viewerUI.zoom = false; showDrawingViewer();
+    }
+    if (action === 'viewer-details') { viewerUI.details = !viewerUI.details; showDrawingViewer(); }
+    if (action === 'viewer-zoom') { viewerUI.zoom = !viewerUI.zoom; showDrawingViewer(); }
+    if (action === 'viewer-restore') restoreViewerParameters();
+    if (action === 'viewer-edit') openImageEditor(viewedDrawing());
+    if (action === 'viewer-enhance') processingPanel.open(viewedDrawing());
+    if (action === 'viewer-local-tools') {
+      const item = viewedDrawing(); closeDrawingViewer(); showPage('components');
+      void localToolsPanel.useDrawing(item);
+    }
+    if (action === 'viewer-source') void useViewerReference('source');
+    if (action === 'viewer-reference') void useViewerReference('reference');
+    if (action === 'version-view' || action === 'version-prev' || action === 'version-next') {
+      const versions = groupVersions(drawings, viewerUI.ids[viewerUI.index]);
+      const index = versions.findIndex((row) => row.id === viewerUI.imageId);
+      viewerUI.imageId = action === 'version-view' ? event.target.closest('[data-image]').dataset.image
+        : versions[index + (action === 'version-prev' ? -1 : 1)]?.id || viewerUI.imageId;
+      viewerUI.zoom = false; showDrawingViewer();
+    }
+    if (action === 'version-select') {
+      const item = viewedDrawing();
+      void drawingOperation(async () => {
+        await drawingLibrary.selectVersion(item.id); await reloadDrawings(); notifyImagesChanged(); toast('当前版本已更新');
+      });
+    }
+    if (action === 'version-compare') { viewerUI.compare = !viewerUI.compare; viewerUI.zoom = false; showDrawingViewer(); }
+    if (action === 'version-copy-seed') {
+      const seed = drawingSeed(viewedDrawing());
+      if (seed !== null) void navigator.clipboard.writeText(String(seed)).then(() => toast('种子已复制'), () => toast('复制失败，请在参数中查看种子'));
+    }
+    if (action === 'version-delete') deleteDrawingsDialog([viewedDrawing().id], '删除这个版本');
+    if (action === 'version-delete-group') deleteDrawingsDialog(groupVersions(drawings, viewedDrawing().id).map((row) => row.id), '删除整个图组');
+    if (action === 'viewer-restore-profiles') {
+      const item = viewedDrawing();
+      const key = currentChat().key || '';
+      if (!await discardProfileChanges()) return;
+      if (!window.confirm(`将图片中的角色档案恢复到${key ? '当前聊天覆盖' : '全局档案'}？同 ID 的档案会被覆盖。`)) return;
+      try {
+        state.characterProfiles = restoreSceneProfiles(state.characterProfiles, item.snapshot.characterScene, key);
+        useLiveCharacterScene(); profileUI.scope = key ? 'chat' : 'global';
+        loadProfileDraft(); persist(); closeDrawingViewer(); showPage('characters'); toast('图片角色档案已恢复');
+      } catch (error) { toast(error.message); }
+    }
+    if (action === 'favorite') toggleDrawingFavorite(event.target.closest('[data-image]')?.dataset.image);
+  });
+  document.getElementById('overlay-root').addEventListener('change', (event) => {
+    if (event.target.hasAttribute('data-viewer-version')) { viewerUI.imageId = event.target.value; viewerUI.zoom = false; showDrawingViewer(); }
+    if (event.target.hasAttribute('data-viewer-compare')) { viewerUI.compareId = event.target.value; showDrawingViewer(); }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (document.querySelector('.novelai-processing-dialog[open], .tag-picker[open], .profile-ai-dialog[open], .network-diagnostic-dialog[open]')) return;
+    if (event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if (document.querySelector('.drawing-viewer') && viewerUI.review && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const rating = ({ '0': 'unrated', '1': 'best', '2': 'usable', '3': 'reject' })[event.key];
+      if (rating) { event.preventDefault(); markReviewed(rating); return; }
+      if (event.key.toLowerCase() === 'z') { event.preventDefault(); markReviewed('unrated', true); return; }
+    }
+    if (document.querySelector('.drawing-viewer') && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      event.preventDefault();
+      viewerUI.index = (viewerUI.index + (event.key === 'ArrowLeft' ? -1 : 1) + viewerUI.ids.length) % viewerUI.ids.length;
+      viewerUI.imageId = ''; viewerUI.compare = false;
+      viewerUI.zoom = false; showDrawingViewer(); return;
+    }
+    if (event.key === 'Escape') {
+      if (imageEditorUI) { closeImageEditor(); return; }
+      const overlay = document.getElementById('overlay-root');
+      const dialogs = overlay.querySelectorAll('dialog');
+      if (dialogs.length) dialogs.forEach((dialog) => dialog.close());
+      else overlay.replaceChildren();
+    }
+  });
+}

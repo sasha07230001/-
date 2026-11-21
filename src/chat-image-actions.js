@@ -1,0 +1,135 @@
+import { nativeCharacterPrompts, normalizeCharacterScene, normalizeProfile } from './character-profiles.js';
+import { characterDynamics } from './multi-character-prompt.js';
+import { canRecoverGeneration } from './generation-recovery.js';
+import { chatPromptText, createChatPromptStyle, inferChatPromptStyle, normalizeChatPromptStyle } from './chat-prompt-style.js';
+
+export function chatImageTaskBusy(task) {
+  return ['queued', 'preparing', 'confirming', 'running', 'paused'].includes(task?.status)
+    || task?.status === 'failed' && canRecoverGeneration(task);
+}
+
+export function chatImageBelongsTo(row, binding) {
+  return Boolean(row?.chatBinding && binding
+    && ['id', 'chatKey', 'branch', 'swipe', 'slot'].every((key) => row.chatBinding[key] === binding[key]));
+}
+
+export function chatImagePrompt(row) {
+  const snapshot = row?.snapshot, params = snapshot?.params || snapshot?.config?.params || {};
+  return {
+    positive: snapshot?.characterScene?.applied ? snapshot.characterScene.basePositive || '' : params.positive || '',
+    negative: snapshot?.characterScene?.applied ? snapshot.characterScene.baseNegative || '' : params.negative || '',
+  };
+}
+
+export function chatImagePromptText(row) {
+  const snapshot = row?.snapshot, params = snapshot?.params || snapshot?.config?.params || {};
+  const sections = [
+    params.artist ? `画师串：\n${params.artist}` : '',
+    params.positive ? `正向提示词：\n${params.positive}` : '',
+    params.negative ? `负面提示词：\n${params.negative}` : '',
+  ];
+  if (nativeCharacterPrompts(snapshot?.provider, params.model, params.characterMode) && snapshot?.characterScene?.applied) {
+    for (const [index, role] of (snapshot.characterScene.characterPrompts || []).entries()) {
+      sections.push(`角色 ${index + 1}${role.name ? `（${role.name}）` : ''}：\n${role.positive || ''}`
+        + (role.negative ? `\n负面提示词：${role.negative}` : ''));
+    }
+  }
+  return sections.filter(Boolean).join('\n\n');
+}
+
+export function applyChatImageStyle(draft, current, samplePrompt = '', sourcePrompt = '') {
+  if (draft.provider !== current?.provider) throw new Error('画风配置与原图的生图模式不一致');
+  const next = structuredClone(draft);
+  const params = next.params || next.config?.params;
+  const style = current.params || current.config?.params;
+  if (!params || !style) throw new Error('图片没有可用的生成参数');
+  for (const key of ['artist', 'negative']) {
+    if (typeof style[key] === 'string') params[key] = style[key];
+  }
+  const recorded = normalizeChatPromptStyle(next.chatPromptStyle, params.positive)
+    || inferChatPromptStyle(params.positive, sourcePrompt, samplePrompt);
+  let scene = recorded?.scene || params.positive || '';
+  const examplePrefix = samplePrompt.trim() && `${samplePrompt.trim()}, `;
+  if (!recorded && examplePrefix && scene.startsWith(examplePrefix)) {
+    scene = scene.slice(examplePrefix.length).trim() || scene;
+  }
+  const prefix = current.characterScene?.applied ? current.characterScene.basePositive : style.positive;
+  const currentPrefix = inferChatPromptStyle(prefix, scene, samplePrompt)?.prefix
+    ?? createChatPromptStyle(prefix, '', samplePrompt).prefix;
+  if (!recorded && currentPrefix && scene.startsWith(`${currentPrefix}, `)) scene = scene.slice(currentPrefix.length + 2);
+  next.chatPromptStyle = createChatPromptStyle(currentPrefix, scene);
+  params.positive = chatPromptText(next.chatPromptStyle);
+  return next;
+}
+
+export function refreshChatImageCharacters(draft, profiles, currentScene) {
+  const next = structuredClone(draft), scene = normalizeCharacterScene(next.characterScene);
+  if (!scene?.entries.length) return next;
+  const live = normalizeCharacterScene(currentScene);
+  const warnings = [...(scene.warnings || [])];
+  if (!scene.directions) scene.directions = (scene.characterPrompts || []).map((role) => ({
+    profileId: role.id, action: characterDynamics(role.positive),
+  }));
+  scene.entries = scene.entries.map((entry) => {
+    const profile = normalizeProfile(profiles.find((row) => row.id === entry.profileId && row.enabled !== false));
+    if (!profile) {
+      warnings.push(`「${entry.profile.name}」的当前档案已停用或不存在，继续使用原图记录。`);
+      return entry;
+    }
+    const direction = scene.directions.find((row) => row.profileId === entry.profileId);
+    if (direction) { direction.appearance = ''; direction.outfit = ''; }
+    const active = live?.entries.find((row) => row.profileId === entry.profileId);
+    const updated = { ...entry, profile };
+    if (active) {
+      for (const key of ['outfitId', 'outfitMode', 'outfitPrompt', 'outfitScope']) {
+        delete updated[key];
+        if (Object.hasOwn(active, key)) updated[key] = active[key];
+      }
+    } else {
+      updated.outfitId = profile.defaultOutfitId;
+      for (const key of ['outfitMode', 'outfitPrompt', 'outfitScope']) delete updated[key];
+    }
+    return updated;
+  });
+  const params = next.params || next.config.params;
+  if (scene.applied) {
+    scene.basePositive = params.positive;
+    scene.baseNegative = params.negative;
+  }
+  delete scene.applied; delete scene.characterPrompts;
+  scene.warnings = [...new Set(warnings)];
+  next.characterScene = normalizeCharacterScene(scene);
+  return next;
+}
+
+export function applyChatImageEdit(draft, edits, randomize = false, seed = () => crypto.getRandomValues(new Uint32Array(1))[0]) {
+  const next = structuredClone(draft), params = next.params || next.config?.params;
+  if (!params) throw new Error('图片没有可用的生成参数');
+  if (edits !== undefined) {
+    if (!edits || ['positive', 'negative'].some((key) => typeof edits[key] !== 'string' || edits[key].length > 32000)
+      || !edits.positive.trim()) throw new Error('请填写正向提示词，单栏最多 32000 字符');
+    const previousStyle = normalizeChatPromptStyle(next.chatPromptStyle, params.positive);
+    params.positive = edits.positive.trim(); params.negative = edits.negative.trim();
+    if (previousStyle) {
+      const prefix = previousStyle.prefix && `${previousStyle.prefix}, `;
+      next.chatPromptStyle = prefix && params.positive.startsWith(prefix)
+        ? createChatPromptStyle(previousStyle.prefix, params.positive.slice(prefix.length))
+        : createChatPromptStyle('', params.positive);
+    }
+  }
+  if (randomize) {
+    const fresh = (previous) => {
+      const value = seed();
+      return value === previous ? (value + 1) % 4294967296 : value;
+    };
+    if (next.provider === 'openai') {
+      const extra = JSON.parse(params.extra || '{}');
+      if (Object.hasOwn(extra, 'seed')) extra.seed = fresh(extra.seed);
+      params.extra = JSON.stringify(extra);
+    } else {
+      if (next.provider === 'comfyui' && !next.config.mapping?.seed) throw new Error('工作流没有映射随机种子，请先在接口配置补齐');
+      params.seed = fresh(params.seed);
+    }
+  }
+  return next;
+}

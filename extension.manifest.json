@@ -1,0 +1,12 @@
+{
+  "display_name": "灵画师",
+  "loading_order": 100,
+  "requires": [],
+  "optional": [],
+  "dependencies": [],
+  "js": "dist/index.js?ver=0.26.21&build=20261122-profile-bridge-fix",
+  "author": "小波",
+  "version": "0.26.21",
+  "auto_update": false,
+  "minimum_client_version": "1.12.13"
+}
